@@ -119,6 +119,11 @@ class _AnaSayfaState extends State<AnaSayfa> {
     return torba[rastgele.nextInt(torba.length)];
   }
 
+  // Türkçe I/İ harflerini doğru küçültür (IRMAK -> ırmak)
+  String turkceKucuk(String metin) {
+    return metin.replaceAll('I', 'ı').replaceAll('İ', 'i').toLowerCase();
+  }
+
   void kartCevapla(bool biliyordum) {
     setState(() {
       if (biliyordum) {
@@ -133,7 +138,7 @@ class _AnaSayfaState extends State<AnaSayfa> {
   }
 
   void kontrolEt() {
-        final cevap = turkceKucuk(cevapKutusu.text.trim());
+    final cevap = turkceKucuk(cevapKutusu.text.trim());
     if (cevap.isEmpty) return;
     setState(() {
       if (cevap == testKelimesi.anlam) {
@@ -164,7 +169,7 @@ class _AnaSayfaState extends State<AnaSayfa> {
 
   void kelimeEkle() {
     final ing = ingKutusu.text.trim().toLowerCase();
-        final tr = turkceKucuk(trKutusu.text.trim());
+    final tr = turkceKucuk(trKutusu.text.trim());
     if (ing.isEmpty || tr.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Boş bırakılamaz.')),
@@ -183,7 +188,6 @@ class _AnaSayfaState extends State<AnaSayfa> {
     );
   }
 
-  // YENİ: Silme makinesi
   void kelimeSil(Kelime k) {
     if (kelimeler.length <= 1) return;
     setState(() {
@@ -191,14 +195,7 @@ class _AnaSayfaState extends State<AnaSayfa> {
       aktif = kelimeSec();
       testKelimesi = kelimeSec();
     });
-      String turkceKucuk(String metin) {
-    return metin.replaceAll('I', 'ı').replaceAll('İ', 'i').toLowerCase();
-  }
     kelimeleriKaydet();
-  }
-
-    String turkceKucuk(String metin) {
-    return metin.replaceAll('I', 'ı').replaceAll('İ', 'i').toLowerCase();
   }
 
   Widget kartEkrani() {
@@ -336,7 +333,6 @@ class _AnaSayfaState extends State<AnaSayfa> {
         return ListTile(
           title: Text(k.ing),
           subtitle: Text(k.anlam),
-          // YENİ: Yanlış sayısı + çöp kutusu yan yana
           trailing: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
