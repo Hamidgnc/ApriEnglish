@@ -133,7 +133,7 @@ class _AnaSayfaState extends State<AnaSayfa> {
   }
 
   void kontrolEt() {
-    final cevap = cevapKutusu.text.trim().toLowerCase();
+        final cevap = turkceKucuk(cevapKutusu.text.trim());
     if (cevap.isEmpty) return;
     setState(() {
       if (cevap == testKelimesi.anlam) {
@@ -164,7 +164,7 @@ class _AnaSayfaState extends State<AnaSayfa> {
 
   void kelimeEkle() {
     final ing = ingKutusu.text.trim().toLowerCase();
-    final tr = trKutusu.text.trim().toLowerCase();
+        final tr = turkceKucuk(trKutusu.text.trim());
     if (ing.isEmpty || tr.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Boş bırakılamaz.')),
@@ -181,6 +181,24 @@ class _AnaSayfaState extends State<AnaSayfa> {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text("'$ing' eklendi!")),
     );
+  }
+
+  // YENİ: Silme makinesi
+  void kelimeSil(Kelime k) {
+    if (kelimeler.length <= 1) return;
+    setState(() {
+      kelimeler.remove(k);
+      aktif = kelimeSec();
+      testKelimesi = kelimeSec();
+    });
+      String turkceKucuk(String metin) {
+    return metin.replaceAll('I', 'ı').replaceAll('İ', 'i').toLowerCase();
+  }
+    kelimeleriKaydet();
+  }
+
+    String turkceKucuk(String metin) {
+    return metin.replaceAll('I', 'ı').replaceAll('İ', 'i').toLowerCase();
   }
 
   Widget kartEkrani() {
@@ -318,7 +336,17 @@ class _AnaSayfaState extends State<AnaSayfa> {
         return ListTile(
           title: Text(k.ing),
           subtitle: Text(k.anlam),
-          trailing: Text('yanlış: ${k.yanlis}'),
+          // YENİ: Yanlış sayısı + çöp kutusu yan yana
+          trailing: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text('yanlış: ${k.yanlis}'),
+              IconButton(
+                icon: const Icon(Icons.delete_outline),
+                onPressed: () => kelimeSil(k),
+              ),
+            ],
+          ),
         );
       },
     );
@@ -337,7 +365,6 @@ class _AnaSayfaState extends State<AnaSayfa> {
       body: ekranlar[sekme],
       bottomNavigationBar: NavigationBar(
         selectedIndex: sekme,
-        
         onDestinationSelected: (i) {
           setState(() {
             sekme = i;
