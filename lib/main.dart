@@ -9,12 +9,15 @@ import 'package:timezone/data/latest_all.dart' as tzdata;
 import 'package:timezone/timezone.dart' as tz;
 import 'paket.dart'; // hazır kelimeler ayrı dosyada
 
-// Uygulamanın renkleri
-const kTuruncu = Color(0xFFF5842C);
-const kKoyuTuruncu = Color(0xFFCD5C16);
-const kKrem = Color(0xFFFFF6E8);
-const kAcikTuruncu = Color(0xFFFFE4C8);
-const kKahve = Color(0xFF96643C);
+// Uygulamanın renkleri (koyu tema: gri tonlar + tek vurgu rengi kayısı turuncusu)
+const kTuruncu = Color(0xFFF5842C); // ana vurgu: butonlar, halkalar
+const kParlakTuruncu = Color(0xFFFF9A4D); // koyu zeminde okunan turuncu yazı
+const kZemin = Color(0xFF0E0D0C); // sayfa arka planı
+const kKart = Color(0xFF1C1A18); // kartlar, kutular, yazı alanları
+const kCizgi = Color(0xFF2A2724); // çerçeveler, boş çubuklar
+const kVurguZemin = Color(0xFF2A2016); // seçili şeylerin turuncumsu zemini
+const kYazi = Color(0xFFF7F2EC); // ana yazı rengi
+const kSoluk = Color(0xFFA39B92); // açıklama yazıları
 
 // YENİ: Telefonun bildirim sistemi
 final FlutterLocalNotificationsPlugin bildirimler = FlutterLocalNotificationsPlugin();
@@ -206,24 +209,33 @@ class KelimeUygulamasi extends StatelessWidget {
       title: 'ApriEnglish',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
+        fontFamily: 'Nunito', // pubspec.yaml'da tanımladığımız yazı tipi
         colorScheme: ColorScheme.fromSeed(
           seedColor: kTuruncu,
-          primary: kKoyuTuruncu,
+          brightness: Brightness.dark, // koyu tema: yazılar otomatik açık renk olur
+          primary: kTuruncu,
+          onPrimary: const Color(0xFF1A0E05),
+          surface: kZemin,
+          onSurface: kYazi,
         ),
-        scaffoldBackgroundColor: kKrem,
+        scaffoldBackgroundColor: kZemin,
         appBarTheme: const AppBarTheme(
-          backgroundColor: kKrem,
-          foregroundColor: kKoyuTuruncu,
+          backgroundColor: kZemin,
+          foregroundColor: kYazi,
+          surfaceTintColor: Colors.transparent,
           titleTextStyle: TextStyle(
-            fontSize: 26,
-            fontWeight: FontWeight.bold,
-            color: kKoyuTuruncu,
+            fontFamily: 'Nunito',
+            fontSize: 24,
+            fontWeight: FontWeight.w900,
+            color: kYazi,
           ),
         ),
         navigationBarTheme: const NavigationBarThemeData(
-          backgroundColor: Colors.white,
-          indicatorColor: kAcikTuruncu,
+          backgroundColor: kZemin,
+          indicatorColor: kVurguZemin,
+          surfaceTintColor: Colors.transparent,
         ),
+        dialogTheme: const DialogThemeData(backgroundColor: kKart),
       ),
       home: const AnaSayfa(),
     );
@@ -716,7 +728,7 @@ class _AnaSayfaState extends State<AnaSayfa> {
               style: const TextStyle(
                 fontSize: 20,
                 fontWeight: FontWeight.bold,
-                color: kKoyuTuruncu,
+                color: kParlakTuruncu,
               ),
             ),
           ),
@@ -724,7 +736,7 @@ class _AnaSayfaState extends State<AnaSayfa> {
           bugun >= hedef
               ? 'Bugünkü hedef tamam! 🎉 ($bugun / $hedef)'
               : 'Bugünkü hedef: $bugun / $hedef',
-          style: const TextStyle(color: kKahve, fontSize: 15),
+          style: const TextStyle(color: kSoluk, fontSize: 15),
         ),
         const SizedBox(height: 10),
         // Hedef küçükse kayısı dizisi, büyükse ilerleme çubuğu
@@ -749,7 +761,7 @@ class _AnaSayfaState extends State<AnaSayfa> {
             child: LinearProgressIndicator(
               value: min(1.0, bugun / hedef),
               minHeight: 14,
-              backgroundColor: kAcikTuruncu,
+              backgroundColor: kVurguZemin,
               color: kTuruncu,
             ),
           ),
@@ -768,7 +780,7 @@ class _AnaSayfaState extends State<AnaSayfa> {
         width: double.infinity,
         height: 400,
         decoration: BoxDecoration(
-          color: Colors.white,
+          color: kKart,
           borderRadius: BorderRadius.circular(32),
           boxShadow: const [
             BoxShadow(color: Colors.black12, blurRadius: 20, offset: Offset(0, 8)),
@@ -821,7 +833,7 @@ class _AnaSayfaState extends State<AnaSayfa> {
               aktif.seviye >= 3
                   ? '☀️ tekrar zamanı: hatırlıyor musun?'
                   : 'karta dokun ve çevir',
-              style: const TextStyle(color: Color(0xFFBE966E), fontSize: 14),
+              style: const TextStyle(color: Color(0xFF7E766E), fontSize: 14),
             ),
             const SizedBox(height: 16),
           ],
@@ -856,7 +868,7 @@ class _AnaSayfaState extends State<AnaSayfa> {
           ),
         ),
         const SizedBox(height: 8),
-        Text(etiket, style: const TextStyle(color: kKahve)),
+        Text(etiket, style: const TextStyle(color: kSoluk)),
       ],
     );
   }
@@ -875,8 +887,8 @@ class _AnaSayfaState extends State<AnaSayfa> {
             children: [
               yuvarlakButon(
                 ikon: Icons.close,
-                renk: const Color(0xFFD2463C),
-                zemin: Colors.white,
+                renk: const Color(0xFFE8674A),
+                zemin: kKart,
                 etiket: 'Bilmiyorum',
                 onTap: () => kartCevapla(false),
               ),
@@ -905,7 +917,7 @@ class _AnaSayfaState extends State<AnaSayfa> {
     return Container(
       margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
       child: Material(
-        color: Colors.white,
+        color: kKart,
         borderRadius: BorderRadius.circular(20),
         child: InkWell(
           borderRadius: BorderRadius.circular(20),
@@ -918,10 +930,10 @@ class _AnaSayfaState extends State<AnaSayfa> {
                   width: 56,
                   height: 56,
                   decoration: const BoxDecoration(
-                    color: kAcikTuruncu,
+                    color: kVurguZemin,
                     shape: BoxShape.circle,
                   ),
-                  child: Icon(ikon, color: kKoyuTuruncu, size: 30),
+                  child: Icon(ikon, color: kParlakTuruncu, size: 30),
                 ),
                 const SizedBox(width: 16),
                 Expanded(
@@ -936,11 +948,11 @@ class _AnaSayfaState extends State<AnaSayfa> {
                         ),
                       ),
                       const SizedBox(height: 2),
-                      Text(aciklama, style: const TextStyle(color: kKahve)),
+                      Text(aciklama, style: const TextStyle(color: kSoluk)),
                     ],
                   ),
                 ),
-                const Icon(Icons.chevron_right, color: kKahve),
+                const Icon(Icons.chevron_right, color: kSoluk),
               ],
             ),
           ),
@@ -960,7 +972,7 @@ class _AnaSayfaState extends State<AnaSayfa> {
             style: TextStyle(
               fontSize: 20,
               fontWeight: FontWeight.bold,
-              color: kKoyuTuruncu,
+              color: kParlakTuruncu,
             ),
           ),
         ),
@@ -973,7 +985,7 @@ class _AnaSayfaState extends State<AnaSayfa> {
             children: [
               const Text(
                 'Yön',
-                style: TextStyle(fontWeight: FontWeight.bold, color: kKahve),
+                style: TextStyle(fontWeight: FontWeight.bold, color: kSoluk),
               ),
               const SizedBox(height: 8),
               Wrap(
@@ -994,7 +1006,7 @@ class _AnaSayfaState extends State<AnaSayfa> {
               const SizedBox(height: 6),
               const Text(
                 'Dinle modunda kelime hep İngilizce okunur.',
-                style: TextStyle(fontSize: 12, color: kKahve),
+                style: TextStyle(fontSize: 12, color: kSoluk),
               ),
             ],
           ),
@@ -1004,7 +1016,7 @@ class _AnaSayfaState extends State<AnaSayfa> {
           child: Text(
             'Her tur $turUzunlugu soru. Açık seviyelerden sorulur.',
             textAlign: TextAlign.center,
-            style: const TextStyle(color: kKahve),
+            style: const TextStyle(color: kSoluk),
           ),
         ),
       ],
@@ -1013,17 +1025,17 @@ class _AnaSayfaState extends State<AnaSayfa> {
 
   // Bir şık butonu: cevaptan sonra doğrusu yeşil, yanlış seçilen kırmızı olur
   Widget sikButonu(String sik) {
-    Color zemin = Colors.white;
-    Color yazi = const Color(0xFF3C2D23);
+    Color zemin = kKart;
+    Color yazi = kYazi;
     if (cevaplandi) {
       if (sik == dogruSik) {
-        zemin = const Color(0xFF4CAF50);
+        zemin = const Color(0xFF2E9E5B);
         yazi = Colors.white;
       } else if (sik == secilenSik) {
-        zemin = const Color(0xFFE5534B);
+        zemin = const Color(0xFFC94A3A);
         yazi = Colors.white;
       } else {
-        yazi = const Color(0xFFB4A596);
+        yazi = const Color(0xFF5C554F);
       }
     }
     return Padding(
@@ -1061,7 +1073,7 @@ class _AnaSayfaState extends State<AnaSayfa> {
       width: double.infinity,
       padding: const EdgeInsets.symmetric(vertical: 28, horizontal: 20),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: kKart,
         borderRadius: BorderRadius.circular(28),
         boxShadow: const [
           BoxShadow(color: Colors.black12, blurRadius: 16, offset: Offset(0, 6)),
@@ -1073,7 +1085,7 @@ class _AnaSayfaState extends State<AnaSayfa> {
             dinleModu
                 ? 'Duyduğun kelimenin anlamı ne?'
                 : (tersMi() ? 'İngilizcesi ne?' : 'Türkçesi ne?'),
-            style: const TextStyle(color: kKahve),
+            style: const TextStyle(color: kSoluk),
           ),
           const SizedBox(height: 14),
           if (dinleModu)
@@ -1100,7 +1112,7 @@ class _AnaSayfaState extends State<AnaSayfa> {
                   style: const TextStyle(
                     fontSize: 38,
                     fontWeight: FontWeight.bold,
-                    color: kKoyuTuruncu,
+                    color: kParlakTuruncu,
                   ),
                 ),
               ),
@@ -1120,8 +1132,8 @@ class _AnaSayfaState extends State<AnaSayfa> {
   // Doğru/yanlış kutusu ve sonraki butonu
   Widget geriBildirim() {
     final k = soru;
-    final renk = sonCevapDogru ? const Color(0xFF2E7D32) : const Color(0xFFC62828);
-    final zemin = sonCevapDogru ? const Color(0xFFE6F4E7) : const Color(0xFFFDE7E6);
+    final renk = sonCevapDogru ? const Color(0xFF4CC37A) : const Color(0xFFE8674A);
+    final zemin = sonCevapDogru ? const Color(0xFF14231A) : const Color(0xFF2A1715);
     return Column(
       children: [
         Container(
@@ -1176,7 +1188,7 @@ class _AnaSayfaState extends State<AnaSayfa> {
           Row(
             children: [
               IconButton(
-                icon: const Icon(Icons.close, color: kKahve),
+                icon: const Icon(Icons.close, color: kSoluk),
                 onPressed: () => setState(() => testDurumu = 'secim'),
               ),
               Expanded(
@@ -1185,7 +1197,7 @@ class _AnaSayfaState extends State<AnaSayfa> {
                   child: LinearProgressIndicator(
                     value: (soruNo + 1) / turSorulari.length,
                     minHeight: 10,
-                    backgroundColor: kAcikTuruncu,
+                    backgroundColor: kVurguZemin,
                     color: kTuruncu,
                   ),
                 ),
@@ -1193,7 +1205,7 @@ class _AnaSayfaState extends State<AnaSayfa> {
               const SizedBox(width: 12),
               Text(
                 '${soruNo + 1}/${turSorulari.length}',
-                style: const TextStyle(fontWeight: FontWeight.bold, color: kKahve),
+                style: const TextStyle(fontWeight: FontWeight.bold, color: kSoluk),
               ),
             ],
           ),
@@ -1209,7 +1221,7 @@ class _AnaSayfaState extends State<AnaSayfa> {
               decoration: InputDecoration(
                 hintText: tersMi() ? 'İngilizcesini yaz' : 'Türkçesini yaz',
                 filled: true,
-                fillColor: Colors.white,
+                fillColor: kKart,
                 border: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(18),
                   borderSide: BorderSide.none,
@@ -1271,7 +1283,7 @@ class _AnaSayfaState extends State<AnaSayfa> {
                     style: TextStyle(
                       fontSize: 40,
                       fontWeight: FontWeight.bold,
-                      color: oran >= 0.5 ? Colors.white : kKoyuTuruncu,
+                      color: oran >= 0.5 ? Colors.white : kParlakTuruncu,
                     ),
                   ),
                 ),
@@ -1286,13 +1298,13 @@ class _AnaSayfaState extends State<AnaSayfa> {
           style: const TextStyle(
             fontSize: 24,
             fontWeight: FontWeight.bold,
-            color: kKoyuTuruncu,
+            color: kParlakTuruncu,
           ),
         ),
         const SizedBox(height: 20),
         if (turYanlislar.isNotEmpty)
           Material(
-            color: Colors.white,
+            color: kKart,
             borderRadius: BorderRadius.circular(20),
             child: Padding(
               padding: const EdgeInsets.symmetric(vertical: 8),
@@ -1303,7 +1315,7 @@ class _AnaSayfaState extends State<AnaSayfa> {
                   padding: EdgeInsets.fromLTRB(16, 8, 16, 0),
                   child: Text(
                     'Tekrar et',
-                    style: TextStyle(fontWeight: FontWeight.bold, color: kKahve),
+                    style: TextStyle(fontWeight: FontWeight.bold, color: kSoluk),
                   ),
                 ),
                 for (final k in turYanlislar)
@@ -1384,7 +1396,7 @@ class _AnaSayfaState extends State<AnaSayfa> {
                     ),
                     Text(
                       '$ogrenilen / $toplam kelime öğrenildi',
-                      style: const TextStyle(color: kKahve),
+                      style: const TextStyle(color: kSoluk),
                     ),
                   ],
                 ),
@@ -1401,7 +1413,7 @@ class _AnaSayfaState extends State<AnaSayfa> {
             child: LinearProgressIndicator(
               value: toplam == 0 ? 0 : ogrenilen / toplam,
               minHeight: 8,
-              backgroundColor: kAcikTuruncu,
+              backgroundColor: kVurguZemin,
               color: kTuruncu,
             ),
           ),
@@ -1419,7 +1431,7 @@ class _AnaSayfaState extends State<AnaSayfa> {
           padding: EdgeInsets.fromLTRB(20, 4, 20, 8),
           child: Text(
             'Çalışmak istediğin seviyeleri aç',
-            style: TextStyle(color: kKahve, fontSize: 15),
+            style: TextStyle(color: kSoluk, fontSize: 15),
           ),
         ),
         for (final d in duzeyBilgisi.entries) paketKarti(d.key, d.value),
@@ -1431,7 +1443,7 @@ class _AnaSayfaState extends State<AnaSayfa> {
             leading: const Icon(Icons.add_circle_outline, color: kTuruncu),
             title: const Text(
               'Kendi kelimeni ekle',
-              style: TextStyle(fontWeight: FontWeight.bold, color: kKahve),
+              style: TextStyle(fontWeight: FontWeight.bold, color: kSoluk),
             ),
             children: [
               TextField(
@@ -1490,7 +1502,7 @@ class _AnaSayfaState extends State<AnaSayfa> {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
       child: Material(
-        color: Colors.white,
+        color: kKart,
         borderRadius: BorderRadius.circular(20),
         child: Padding(padding: const EdgeInsets.all(16), child: child),
       ),
@@ -1514,12 +1526,12 @@ class _AnaSayfaState extends State<AnaSayfa> {
                   style: const TextStyle(
                     fontSize: 22,
                     fontWeight: FontWeight.bold,
-                    color: kKoyuTuruncu,
+                    color: kParlakTuruncu,
                   ),
                 ),
                 Text(
                   'Bugün $bugun kelime bildin',
-                  style: const TextStyle(color: kKahve),
+                  style: const TextStyle(color: kSoluk),
                 ),
               ],
             ),
@@ -1531,10 +1543,10 @@ class _AnaSayfaState extends State<AnaSayfa> {
 
   // Takvim karesinin rengi: o gün ne kadar çok kelime bilindiyse o kadar koyu
   Color takvimRengi(int sayi) {
-    if (sayi >= 10) return kKoyuTuruncu;
-    if (sayi >= 5) return const Color(0xFFF5A15C);
-    if (sayi >= 1) return const Color(0xFFFFD3A8);
-    return const Color(0xFFF1E4D3);
+    if (sayi >= 10) return kParlakTuruncu;
+    if (sayi >= 5) return const Color(0xFFC0662A);
+    if (sayi >= 1) return const Color(0xFF6E3F1E);
+    return kCizgi;
   }
 
   // 📅 Son 12 hafta: her sütun bir hafta, her satır bir gün (Pzt..Paz)
@@ -1548,7 +1560,7 @@ class _AnaSayfaState extends State<AnaSayfa> {
         children: [
           const Text(
             'Son 12 hafta',
-            style: TextStyle(fontWeight: FontWeight.bold, color: kKahve),
+            style: TextStyle(fontWeight: FontWeight.bold, color: kSoluk),
           ),
           const SizedBox(height: 12),
           Row(
@@ -1576,7 +1588,7 @@ class _AnaSayfaState extends State<AnaSayfa> {
           Row(
             mainAxisAlignment: MainAxisAlignment.end,
             children: [
-              const Text('az ', style: TextStyle(color: kKahve, fontSize: 12)),
+              const Text('az ', style: TextStyle(color: kSoluk, fontSize: 12)),
               for (final s in [0, 1, 5, 10])
                 Container(
                   width: 14,
@@ -1587,7 +1599,7 @@ class _AnaSayfaState extends State<AnaSayfa> {
                     borderRadius: BorderRadius.circular(3),
                   ),
                 ),
-              const Text(' çok', style: TextStyle(color: kKahve, fontSize: 12)),
+              const Text(' çok', style: TextStyle(color: kSoluk, fontSize: 12)),
             ],
           ),
         ],
@@ -1613,10 +1625,10 @@ class _AnaSayfaState extends State<AnaSayfa> {
               style: const TextStyle(
                 fontSize: 20,
                 fontWeight: FontWeight.bold,
-                color: kKoyuTuruncu,
+                color: kParlakTuruncu,
               ),
             ),
-            Text(ad, style: const TextStyle(fontSize: 12, color: kKahve)),
+            Text(ad, style: const TextStyle(fontSize: 12, color: kSoluk)),
           ],
         ),
       );
@@ -1628,7 +1640,7 @@ class _AnaSayfaState extends State<AnaSayfa> {
         children: [
           const Text(
             '☀️ Kurutma',
-            style: TextStyle(fontWeight: FontWeight.bold, color: kKahve),
+            style: TextStyle(fontWeight: FontWeight.bold, color: kSoluk),
           ),
           const SizedBox(height: 12),
           Row(
@@ -1643,7 +1655,7 @@ class _AnaSayfaState extends State<AnaSayfa> {
           const Text(
             '3 kez bildiğin kelime kurutmaya alınır. 3 gün sonra yine bilirsen '
             'kuru kayısı olur: artık kalıcı!',
-            style: TextStyle(fontSize: 13, color: kKahve),
+            style: TextStyle(fontSize: 13, color: kSoluk),
           ),
           if (zamaniGelen > 0) ...[
             const SizedBox(height: 8),
@@ -1651,7 +1663,7 @@ class _AnaSayfaState extends State<AnaSayfa> {
               'Bugün tekrar zamanı gelen: $zamaniGelen kelime',
               style: const TextStyle(
                 fontWeight: FontWeight.bold,
-                color: kKoyuTuruncu,
+                color: kParlakTuruncu,
               ),
             ),
           ],
@@ -1696,7 +1708,7 @@ class _AnaSayfaState extends State<AnaSayfa> {
               hintText: 'Kelime ara (${kelimeler.length} kelime)',
               prefixIcon: const Icon(Icons.search),
               filled: true,
-              fillColor: Colors.white,
+              fillColor: kKart,
               border: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(16),
                 borderSide: BorderSide.none,
@@ -1734,7 +1746,7 @@ class _AnaSayfaState extends State<AnaSayfa> {
             child: Text(
               'Burada kelime yok.',
               textAlign: TextAlign.center,
-              style: TextStyle(color: kKahve),
+              style: TextStyle(color: kSoluk),
             ),
           ),
         for (final k in gorunen)
@@ -1936,7 +1948,7 @@ class _HesapSayfasiState extends State<HesapSayfasi> {
     return Padding(
       padding: const EdgeInsets.only(bottom: 12),
       child: Material(
-        color: Colors.white,
+        color: kKart,
         borderRadius: BorderRadius.circular(20),
         child: Padding(padding: const EdgeInsets.all(16), child: child),
       ),
@@ -1947,7 +1959,7 @@ class _HesapSayfasiState extends State<HesapSayfasi> {
         padding: const EdgeInsets.only(bottom: 10),
         child: Text(
           metin,
-          style: const TextStyle(fontWeight: FontWeight.bold, color: kKahve),
+          style: const TextStyle(fontWeight: FontWeight.bold, color: kSoluk),
         ),
       );
 
@@ -1962,7 +1974,7 @@ class _HesapSayfasiState extends State<HesapSayfasi> {
           Center(
             child: CircleAvatar(
               radius: 52,
-              backgroundColor: kAcikTuruncu,
+              backgroundColor: kVurguZemin,
               child: Text(p.avatar, style: const TextStyle(fontSize: 56)),
             ),
           ),
@@ -1987,7 +1999,7 @@ class _HesapSayfasiState extends State<HesapSayfasi> {
                           alignment: Alignment.center,
                           decoration: BoxDecoration(
                             shape: BoxShape.circle,
-                            color: p.avatar == a ? kAcikTuruncu : const Color(0xFFF7F1EA),
+                            color: p.avatar == a ? kVurguZemin : kCizgi,
                             border: Border.all(
                               color: p.avatar == a ? kTuruncu : Colors.transparent,
                               width: 2.5,
@@ -2039,17 +2051,17 @@ class _HesapSayfasiState extends State<HesapSayfasi> {
                 Container(
                   padding: const EdgeInsets.all(12),
                   decoration: BoxDecoration(
-                    color: kKrem,
+                    color: kZemin,
                     borderRadius: BorderRadius.circular(14),
                   ),
                   child: Row(
                     children: [
-                      const Icon(Icons.lightbulb_outline, color: kKoyuTuruncu),
+                      const Icon(Icons.lightbulb_outline, color: kParlakTuruncu),
                       const SizedBox(width: 10),
                       Expanded(
                         child: Text(
                           widget.oneriAciklama,
-                          style: const TextStyle(fontSize: 13, color: kKahve),
+                          style: const TextStyle(fontSize: 13, color: kSoluk),
                         ),
                       ),
                       TextButton(
@@ -2088,7 +2100,7 @@ class _HesapSayfasiState extends State<HesapSayfasi> {
                     style: const TextStyle(
                       fontSize: 20,
                       fontWeight: FontWeight.bold,
-                      color: kKoyuTuruncu,
+                      color: kParlakTuruncu,
                     ),
                   ),
                   onTap: p.bildirim ? saatSec : null,
@@ -2123,13 +2135,13 @@ class _HesapSayfasiState extends State<HesapSayfasi> {
                             style: const TextStyle(
                               fontSize: 26,
                               fontWeight: FontWeight.bold,
-                              color: kKoyuTuruncu,
+                              color: kParlakTuruncu,
                             ),
                           ),
                           Text(
                             e.key,
                             textAlign: TextAlign.center,
-                            style: const TextStyle(fontSize: 12, color: kKahve),
+                            style: const TextStyle(fontSize: 12, color: kSoluk),
                           ),
                         ],
                       ),
@@ -2242,7 +2254,7 @@ class _TanitimSayfasiState extends State<TanitimSayfasi> {
           style: const TextStyle(
             fontSize: 26,
             fontWeight: FontWeight.bold,
-            color: kKoyuTuruncu,
+            color: kParlakTuruncu,
           ),
         ),
       );
@@ -2250,7 +2262,7 @@ class _TanitimSayfasiState extends State<TanitimSayfasi> {
   Widget aciklama(String metin) => Text(
         metin,
         textAlign: TextAlign.center,
-        style: const TextStyle(fontSize: 16, color: kKahve, height: 1.4),
+        style: const TextStyle(fontSize: 16, color: kSoluk, height: 1.4),
       );
 
   // Seçilebilir kart (seviye ve hedef sayfalarında)
@@ -2264,7 +2276,7 @@ class _TanitimSayfasiState extends State<TanitimSayfasi> {
     return Padding(
       padding: const EdgeInsets.only(bottom: 10),
       child: Material(
-        color: secili ? kAcikTuruncu : Colors.white,
+        color: secili ? kVurguZemin : kKart,
         borderRadius: BorderRadius.circular(18),
         child: InkWell(
           borderRadius: BorderRadius.circular(18),
@@ -2293,7 +2305,7 @@ class _TanitimSayfasiState extends State<TanitimSayfasi> {
                           fontWeight: FontWeight.bold,
                         ),
                       ),
-                      Text(detay, style: const TextStyle(color: kKahve)),
+                      Text(detay, style: const TextStyle(color: kSoluk)),
                     ],
                   ),
                 ),
@@ -2337,8 +2349,8 @@ class _TanitimSayfasiState extends State<TanitimSayfasi> {
           children: [
             CircleAvatar(
               radius: 26,
-              backgroundColor: kAcikTuruncu,
-              child: Icon(ikon, color: kKoyuTuruncu, size: 28),
+              backgroundColor: kVurguZemin,
+              child: Icon(ikon, color: kParlakTuruncu, size: 28),
             ),
             const SizedBox(width: 16),
             Expanded(
@@ -2350,7 +2362,7 @@ class _TanitimSayfasiState extends State<TanitimSayfasi> {
                     style: const TextStyle(fontSize: 17, fontWeight: FontWeight.bold),
                   ),
                   const SizedBox(height: 2),
-                  Text(detay, style: const TextStyle(color: kKahve, height: 1.3)),
+                  Text(detay, style: const TextStyle(color: kSoluk, height: 1.3)),
                 ],
               ),
             ),
@@ -2377,7 +2389,7 @@ class _TanitimSayfasiState extends State<TanitimSayfasi> {
       baslik('Seni tanıyalım'),
       CircleAvatar(
         radius: 48,
-        backgroundColor: kAcikTuruncu,
+        backgroundColor: kVurguZemin,
         child: Text(p.avatar, style: const TextStyle(fontSize: 52)),
       ),
       const SizedBox(height: 16),
@@ -2395,7 +2407,7 @@ class _TanitimSayfasiState extends State<TanitimSayfasi> {
                 alignment: Alignment.center,
                 decoration: BoxDecoration(
                   shape: BoxShape.circle,
-                  color: p.avatar == a ? kAcikTuruncu : Colors.white,
+                  color: p.avatar == a ? kVurguZemin : kKart,
                   border: Border.all(
                     color: p.avatar == a ? kTuruncu : Colors.transparent,
                     width: 2.5,
@@ -2415,7 +2427,7 @@ class _TanitimSayfasiState extends State<TanitimSayfasi> {
         decoration: InputDecoration(
           hintText: 'Adın',
           filled: true,
-          fillColor: Colors.white,
+          fillColor: kKart,
           border: OutlineInputBorder(
             borderRadius: BorderRadius.circular(16),
             borderSide: BorderSide.none,
@@ -2491,7 +2503,7 @@ class _TanitimSayfasiState extends State<TanitimSayfasi> {
   Widget build(BuildContext context) {
     final sonSayfa = sayfa == sayfaSayisi - 1;
     return Scaffold(
-      backgroundColor: kKrem,
+      backgroundColor: kZemin,
       body: SafeArea(
         child: Column(
           children: [
@@ -2526,7 +2538,7 @@ class _TanitimSayfasiState extends State<TanitimSayfasi> {
                   width: i == sayfa ? 26 : 10,
                   height: 10,
                   decoration: BoxDecoration(
-                    color: i == sayfa ? kTuruncu : const Color(0xFFE8D5C0),
+                    color: i == sayfa ? kTuruncu : kCizgi,
                     borderRadius: BorderRadius.circular(5),
                   ),
                 );
