@@ -200,6 +200,140 @@ class KayisiCizim extends CustomPainter {
       old.renk != renk || old.doluluk != doluluk;
 }
 
+// YENİ: Bir ders = aynı seviyeden sıradaki 10 kelime
+class Ders {
+  final String duzey; // A1, A2, B1
+  final int no; // 1, 2, 3...
+  final String baslik; // "Yiyecek ve içecek" gibi
+  final List<Kelime> kelimeler;
+
+  Ders(this.duzey, this.no, this.baslik, this.kelimeler);
+
+  // Kayıtta dersi bu adla tutarız, ör. "A1-3"
+  String get kimlik => '$duzey-$no';
+}
+
+// YENİ: Ana sayfadaki seri halkası. oran: 0 = boş, 1 = tam dolu
+class HalkaCizim extends CustomPainter {
+  final double oran;
+
+  HalkaCizim(this.oran);
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    const kalinlik = 10.0;
+    final merkez = Offset(size.width / 2, size.height / 2);
+    final yaricap = size.width / 2 - kalinlik / 2;
+    final kalem = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = kalinlik
+      ..strokeCap = StrokeCap.round;
+    // Önce gri zemin halkası, sonra üstüne turuncu ilerleme yayı
+    canvas.drawCircle(merkez, yaricap, kalem..color = kCizgi);
+    if (oran > 0) {
+      canvas.drawArc(
+        Rect.fromCircle(center: merkez, radius: yaricap),
+        -pi / 2, // saat 12 yönünden başla
+        2 * pi * oran,
+        false,
+        kalem..color = kTuruncu,
+      );
+    }
+  }
+
+  @override
+  bool shouldRepaint(HalkaCizim old) => old.oran != oran;
+}
+
+// YENİ: Ders kartındaki manzara: gökyüzü, güneş, tepeler ve kayısı ağaçları.
+// Her seviyenin gökyüzü farklı: A1 gün batımı, A2 öğle, B1 gece.
+class ManzaraCizim extends CustomPainter {
+  final String duzey;
+
+  ManzaraCizim(this.duzey);
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final w = size.width;
+    final h = size.height;
+    final (List<Color> gok, Color gunes, Color tepe1, Color tepe2) = switch (duzey) {
+      'A2' => (
+          const [Color(0xFF2F6FA8), Color(0xFF7FB6DA), Color(0xFFE6D3A3)],
+          const Color(0xFFFFF1B8),
+          const Color(0xFF4F6B3A),
+          const Color(0xFF2E3F24),
+        ),
+      'B1' => (
+          const [Color(0xFF0B1030), Color(0xFF1F2A5C), Color(0xFF3E3F7A)],
+          const Color(0xFFE9E6D0),
+          const Color(0xFF2A2848),
+          const Color(0xFF17162B),
+        ),
+      _ => (
+          const [Color(0xFF2B2240), Color(0xFF8E4A58), Color(0xFFE9955A)],
+          const Color(0xFFFFCF8A),
+          const Color(0xFF5E3437),
+          const Color(0xFF33231F),
+        ),
+    };
+
+    // Gökyüzü: yukarıdan aşağı renk geçişi
+    final gokBoya = Paint()
+      ..shader = LinearGradient(
+        begin: Alignment.topCenter,
+        end: Alignment.bottomCenter,
+        colors: gok,
+      ).createShader(Offset.zero & size);
+    canvas.drawRect(Offset.zero & size, gokBoya);
+
+    // Güneş (B1'de ay)
+    canvas.drawCircle(Offset(w * 0.74, h * 0.56), w * 0.10, Paint()..color = gunes);
+
+    // Arkadaki sivri dağlar
+    final dag = Path()
+      ..moveTo(0, h * 0.68)
+      ..lineTo(w * 0.18, h * 0.50)
+      ..lineTo(w * 0.35, h * 0.63)
+      ..lineTo(w * 0.55, h * 0.43)
+      ..lineTo(w * 0.77, h * 0.65)
+      ..lineTo(w, h * 0.53)
+      ..lineTo(w, h)
+      ..lineTo(0, h)
+      ..close();
+    canvas.drawPath(dag, Paint()..color = tepe1);
+
+    // Öndeki yumuşak tepe
+    final tepe = Path()
+      ..moveTo(0, h * 0.79)
+      ..quadraticBezierTo(w * 0.25, h * 0.69, w * 0.5, h * 0.77)
+      ..quadraticBezierTo(w * 0.75, h * 0.84, w, h * 0.74)
+      ..lineTo(w, h)
+      ..lineTo(0, h)
+      ..close();
+    canvas.drawPath(tepe, Paint()..color = tepe2);
+
+    // İki kayısı ağacı
+    agac(canvas, Offset(w * 0.18, h * 0.76), w * 0.068);
+    agac(canvas, Offset(w * 0.82, h * 0.77), w * 0.058);
+  }
+
+  void agac(Canvas canvas, Offset kok, double r) {
+    canvas.drawRect(
+      Rect.fromLTWH(kok.dx - r * 0.15, kok.dy - r * 0.4, r * 0.3, r * 1.1),
+      Paint()..color = const Color(0xFF21160F),
+    );
+    final tepe = Offset(kok.dx, kok.dy - r);
+    canvas.drawCircle(tepe, r, Paint()..color = const Color(0xFF2E4A33));
+    final meyve = Paint()..color = kTuruncu;
+    canvas.drawCircle(tepe + Offset(-r * 0.4, -r * 0.25), r * 0.18, meyve);
+    canvas.drawCircle(tepe + Offset(r * 0.35, r * 0.05), r * 0.18, meyve);
+    canvas.drawCircle(tepe + Offset(-r * 0.05, r * 0.4), r * 0.18, meyve);
+  }
+
+  @override
+  bool shouldRepaint(ManzaraCizim old) => old.duzey != duzey;
+}
+
 class KelimeUygulamasi extends StatelessWidget {
   const KelimeUygulamasi({super.key});
 
@@ -270,6 +404,9 @@ class _AnaSayfaState extends State<AnaSayfa> {
   Profil profil = Profil(); // ad, avatar, hedef, bildirim ayarları
   bool tanitimTamam = true; // YENİ: ilk açılış tanıtımı görüldü mü
   Map<String, int> gecmis = {}; // her gün kaç kelime bilindi (takvim için)
+  List<Ders> dersler = []; // YENİ: paketten oluşturulan dersler
+  Map<String, int> dersPuanlari = {}; // YENİ: "A1-3" -> kazanılan kayısı (0-3)
+  PageController? dersKaydirici; // YENİ: ana sayfadaki ders kartlarını kaydırır
 
   // Hasat ekranı
   final TextEditingController aramaKutusu = TextEditingController();
@@ -316,6 +453,7 @@ class _AnaSayfaState extends State<AnaSayfa> {
     ingKutusu.dispose();
     trKutusu.dispose();
     aramaKutusu.dispose();
+    dersKaydirici?.dispose();
     super.dispose();
   }
 
@@ -358,6 +496,14 @@ class _AnaSayfaState extends State<AnaSayfa> {
       paketiEkle();
       await prefs.setInt('paket', 1);
     }
+    // YENİ: Ders puanlarını yükle, dersleri kur, kaydırıcıyı sıradaki derste aç
+    final puanMetni = await prefs.getString('dersPuanlari');
+    if (puanMetni != null) {
+      final Map<String, dynamic> m = jsonDecode(puanMetni);
+      dersPuanlari = m.map((ders, puan) => MapEntry(ders, puan as int));
+    }
+    dersleriOlustur();
+    kaydiriciyiKur();
     setState(() {
       bugun = gecmis[bugununTarihi()] ?? 0;
       tanitimTamam = tanitimGoruldu;
@@ -387,6 +533,67 @@ class _AnaSayfaState extends State<AnaSayfa> {
     await prefs.setString(anahtar, metin);
     await prefs.setString('gecmis', jsonEncode(gecmis));
     await prefs.setString('duzeyler', jsonEncode(seciliDuzeyler.toList()));
+    await prefs.setString('dersPuanlari', jsonEncode(dersPuanlari));
+  }
+
+  // ---------------- Dersler ----------------
+
+  // YENİ: Paketteki sırayla her seviyenin kelimelerini 10'arlı derslere böler.
+  // Son parça 5'ten azsa ayrı ders yapmaz, bir önceki derse ekler.
+  void dersleriOlustur() {
+    final harita = {for (final k in kelimeler) k.ing: k};
+    dersler = [];
+    for (final duzey in ['A1', 'A2', 'B1']) {
+      final liste = [
+        for (final p in kelimePaketi)
+          if (p[2] == duzey && harita[p[0]] != null) harita[p[0]]!,
+      ];
+      final basliklar = dersBasliklari[duzey] ?? [];
+      for (int i = 0; i < liste.length; i += 10) {
+        final parca = liste.sublist(i, min(i + 10, liste.length));
+        if (parca.length < 5 && dersler.isNotEmpty && dersler.last.duzey == duzey) {
+          dersler.last.kelimeler.addAll(parca);
+          continue;
+        }
+        final no = i ~/ 10 + 1;
+        final baslik = no <= basliklar.length ? basliklar[no - 1] : 'Ders $no';
+        dersler.add(Ders(duzey, no, baslik, parca));
+      }
+    }
+  }
+
+  // Ana sayfada sadece açık seviyelerin dersleri görünür
+  List<Ders> get gorunenDersler {
+    final liste = dersler.where((d) => seciliDuzeyler.contains(d.duzey)).toList();
+    return liste.isEmpty ? dersler.where((d) => d.duzey == 'A1').toList() : liste;
+  }
+
+  // Henüz bitirilmemiş ilk dersin sırası (hepsi bittiyse sonuncusu)
+  int siradakiDers() {
+    final liste = gorunenDersler;
+    final i = liste.indexWhere((d) => (dersPuanlari[d.kimlik] ?? 0) == 0);
+    return i == -1 ? max(0, liste.length - 1) : i;
+  }
+
+  // Ders kartlarının kaydırıcısını sıradaki derste açılacak şekilde (yeniden) kurar.
+  // Seviyeler değişince de çağırırız, çünkü görünen ders listesi değişir.
+  void kaydiriciyiKur() {
+    dersKaydirici?.dispose();
+    dersKaydirici = PageController(
+      viewportFraction: 0.86, // yandaki kartın kenarı görünsün
+      initialPage: siradakiDers(),
+      keepPage: false, // eski sayfa numarasını hatırlamasın
+    );
+  }
+
+  // Dersteki kelimelerden kaçı en az bir kez bilindi
+  int dersteBilinen(Ders d) => d.kelimeler.where((k) => k.seviye >= 1).length;
+
+  // Ders ekranı 4. adımda gelecek; şimdilik sadece haber veriyoruz
+  void dersiBaslat(Ders d) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('${d.duzey} · Ders ${d.no} ekranı bir sonraki adımda geliyor!')),
+    );
   }
 
   // Tekrar zamanı geldi mi? (tarihi yoksa ya da bugün/geçmişteyse evet)
@@ -490,6 +697,7 @@ class _AnaSayfaState extends State<AnaSayfa> {
       profil = yeni;
       seciliDuzeyler = duzeyler;
       tanitimTamam = true;
+      kaydiriciyiKur();
       aktif = kelimeSec();
       onYuz = true;
     });
@@ -683,6 +891,7 @@ class _AnaSayfaState extends State<AnaSayfa> {
       seciliDuzeyler.add('Benim');
       ingKutusu.clear();
       trKutusu.clear();
+      dersleriOlustur(); // paketteki bir kelimenin yerine geçtiyse dersler güncellensin
     });
     kelimeleriKaydet();
     ScaffoldMessenger.of(context).showSnackBar(
@@ -700,6 +909,7 @@ class _AnaSayfaState extends State<AnaSayfa> {
       }
       aktif = kelimeSec();
       onYuz = true;
+      kaydiriciyiKur();
     });
     kelimeleriKaydet();
   }
@@ -709,11 +919,336 @@ class _AnaSayfaState extends State<AnaSayfa> {
     setState(() {
       kelimeler.remove(k);
       aktif = kelimeSec();
+      dersleriOlustur(); // silinen kelime dersten de çıksın
     });
     kelimeleriKaydet();
   }
 
   // ---------------- Ekranlar ----------------
+
+  // ===== YENİ: Ana sayfa =====
+
+  Widget anaSayfaEkrani() {
+    final liste = gorunenDersler;
+    return SafeArea(
+      child: Column(
+        children: [
+          ustSerit(),
+          const SizedBox(height: 22),
+          seriHalkasi(),
+          const SizedBox(height: 14),
+          haftaNoktalari(),
+          const SizedBox(height: 10),
+          // Kalan bütün yükseklik ders kartlarının
+          Expanded(
+            child: PageView.builder(
+              controller: dersKaydirici,
+              itemCount: liste.length,
+              itemBuilder: (context, i) => dersKarti(liste[i]),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // Üst şerit: seviye rozeti, günlük hedef çubuğu, profil düğmesi
+  Widget ustSerit() {
+    final hedef = max(1, profil.hedef);
+    final liste = gorunenDersler;
+    final duzey = liste.isEmpty ? 'A1' : liste[siradakiDers()].duzey;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(20, 12, 8, 0),
+      child: Row(
+        children: [
+          Container(
+            width: 48,
+            height: 48,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              color: kCizgi,
+              borderRadius: BorderRadius.circular(14),
+            ),
+            child: Text(
+              duzey,
+              style: const TextStyle(
+                fontSize: 17,
+                fontWeight: FontWeight.w900,
+                color: kTuruncu,
+              ),
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Container(
+              padding: const EdgeInsets.fromLTRB(14, 10, 14, 12),
+              decoration: BoxDecoration(
+                color: kKart,
+                borderRadius: BorderRadius.circular(16),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      const Text(
+                        'Günlük hedef',
+                        style: TextStyle(fontWeight: FontWeight.w800, fontSize: 15),
+                      ),
+                      Text(
+                        '$bugun / $hedef',
+                        style: const TextStyle(
+                          fontWeight: FontWeight.w700,
+                          fontSize: 14,
+                          color: kSoluk,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(3),
+                    child: LinearProgressIndicator(
+                      value: min(1.0, bugun / hedef),
+                      minHeight: 6,
+                      backgroundColor: kCizgi,
+                      color: kTuruncu,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          IconButton(
+            tooltip: 'Hesabım',
+            onPressed: hesabiAc,
+            icon: CircleAvatar(
+              radius: 24,
+              backgroundColor: kKart,
+              child: Text(profil.avatar, style: const TextStyle(fontSize: 24)),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // Ortadaki halka: bugünkü hedefe göre dolar, içinde seri yazar
+  Widget seriHalkasi() {
+    final oran = min(1.0, bugun / max(1, profil.hedef));
+    return SizedBox(
+      width: 168,
+      height: 168,
+      child: CustomPaint(
+        painter: HalkaCizim(oran),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                SizedBox(
+                  width: 30,
+                  height: 34,
+                  child: CustomPaint(
+                    painter: KayisiCizim(renk: kTuruncu, doluluk: 1),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Text(
+                  '${seriHesapla()}',
+                  style: const TextStyle(
+                    fontSize: 50,
+                    fontWeight: FontWeight.w900,
+                    height: 1,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 4),
+            const Text(
+              'GÜNLÜK SERİ',
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w800,
+                letterSpacing: 1.5,
+                color: kSoluk,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // Son 7 gün: çalışılan günler dolu turuncu, bugün beyaz çerçeveli
+  Widget haftaNoktalari() {
+    const harfler = ['P', 'S', 'Ç', 'P', 'C', 'C', 'P']; // Pazartesi..Pazar
+    final simdi = DateTime.now();
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.center,
+      children: List.generate(7, (i) {
+        final gun = simdi.subtract(Duration(days: 6 - i));
+        final calisti = (gecmis[tarihMetni(gun)] ?? 0) > 0;
+        final bugunMu = i == 6;
+        return Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 5),
+          child: Column(
+            children: [
+              Container(
+                width: 28,
+                height: 28,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: calisti ? kTuruncu : Colors.transparent,
+                  border: Border.all(
+                    color: calisti ? kTuruncu : (bugunMu ? kYazi : kCizgi),
+                    width: 2,
+                  ),
+                ),
+                child: calisti
+                    ? const Icon(Icons.check_rounded, size: 18, color: kZemin)
+                    : null,
+              ),
+              const SizedBox(height: 5),
+              Text(
+                harfler[gun.weekday - 1], // weekday: 1 = Pazartesi
+                style: const TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w700,
+                  color: kSoluk,
+                ),
+              ),
+            ],
+          ),
+        );
+      }),
+    );
+  }
+
+  // Büyük yuvarlak ders kartı
+  Widget dersKarti(Ders d) {
+    final puan = dersPuanlari[d.kimlik] ?? 0;
+    final bilinen = dersteBilinen(d);
+    return LayoutBuilder(
+      builder: (context, alan) {
+        // Kart, eldeki alana sığan en büyük daire olsun
+        final cap = min(alan.maxWidth - 16, alan.maxHeight - 34);
+        return Center(
+          child: SizedBox(
+            width: cap,
+            height: cap + 18,
+            child: Stack(
+              alignment: Alignment.topCenter,
+              children: [
+                Positioned(
+                  top: 18,
+                  child: Container(
+                    width: cap,
+                    height: cap,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      border: Border.all(color: kKart, width: 6),
+                    ),
+                    child: ClipOval(
+                      child: CustomPaint(
+                        painter: ManzaraCizim(d.duzey),
+                        child: Column(
+                          children: [
+                            SizedBox(height: cap * 0.15),
+                            Text(
+                              '${d.duzey} · Ders ${d.no}',
+                              style: const TextStyle(
+                                fontSize: 15,
+                                fontWeight: FontWeight.w700,
+                                color: Color(0xFFEBDDEF),
+                              ),
+                            ),
+                            Padding(
+                              padding: const EdgeInsets.symmetric(horizontal: 24),
+                              child: FittedBox(
+                                fit: BoxFit.scaleDown,
+                                child: Text(
+                                  d.baslik,
+                                  style: const TextStyle(
+                                    fontSize: 28,
+                                    fontWeight: FontWeight.w900,
+                                    color: Colors.white,
+                                  ),
+                                ),
+                              ),
+                            ),
+                            const SizedBox(height: 12),
+                            // 3 kayısı: kazanılanlar dolu
+                            Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: List.generate(3, (i) {
+                                return Padding(
+                                  padding: const EdgeInsets.symmetric(horizontal: 5),
+                                  child: SizedBox(
+                                    width: 30,
+                                    height: 34,
+                                    child: CustomPaint(
+                                      painter: KayisiCizim(
+                                        renk: i < puan ? kTuruncu : Colors.white,
+                                        doluluk: i < puan ? 1 : 0,
+                                      ),
+                                    ),
+                                  ),
+                                );
+                              }),
+                            ),
+                            const Spacer(),
+                            SizedBox(
+                              width: cap * 0.56,
+                              height: 52,
+                              child: FilledButton(
+                                onPressed: () => dersiBaslat(d),
+                                style: FilledButton.styleFrom(
+                                  backgroundColor: Colors.white,
+                                  foregroundColor: const Color(0xFF1A0E05),
+                                  textStyle: const TextStyle(
+                                    fontFamily: 'Nunito',
+                                    fontSize: 18,
+                                    fontWeight: FontWeight.w900,
+                                  ),
+                                ),
+                                child: Text(puan > 0 ? 'Tekrarla' : 'Devam et'),
+                              ),
+                            ),
+                            SizedBox(height: cap * 0.11),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+                // Üstteki rozet: dersteki kelimelerden kaçını biliyorsun
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
+                  decoration: BoxDecoration(
+                    color: kTuruncu,
+                    borderRadius: BorderRadius.circular(16),
+                  ),
+                  child: Text(
+                    '$bilinen / ${d.kelimeler.length} kelime',
+                    style: const TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w900,
+                      color: Color(0xFF1A0E05),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  // ===== Eski ekranlar (sırayla yenilenecek) =====
 
   Widget hedefSatiri() {
     final hedef = profil.hedef;
@@ -1786,33 +2321,71 @@ class _AnaSayfaState extends State<AnaSayfa> {
     if (!tanitimTamam) {
       return TanitimSayfasi(profil: profil.kopya(), onBitti: tanitimBitti);
     }
-    final ekranlar = [kartEkrani(), testEkrani(), paketlerEkrani(), hasatEkrani()];
+    // Sekmeler: 0 ana sayfa, 1 kartlar, 2 test, 3 paketler, 4 hasat
+    final ekranlar = [
+      anaSayfaEkrani(),
+      kartEkrani(),
+      testEkrani(),
+      paketlerEkrani(),
+      hasatEkrani(),
+    ];
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('ApriEnglish'),
-        actions: [
-          // YENİ: Sağ üstte avatar, dokununca Hesabım açılır
-          IconButton(
-            tooltip: 'Hesabım',
-            onPressed: hesabiAc,
-            icon: Text(profil.avatar, style: const TextStyle(fontSize: 28)),
-          ),
-          const SizedBox(width: 8),
-        ],
-      ),
+      // Ana sayfanın kendi üst şeridi var; başlık çubuğu sadece diğer sekmelerde
+      appBar: sekme == 0
+          ? null
+          : AppBar(
+              title: const Text('ApriEnglish'),
+              actions: [
+                IconButton(
+                  tooltip: 'Hesabım',
+                  onPressed: hesabiAc,
+                  icon: Text(profil.avatar, style: const TextStyle(fontSize: 28)),
+                ),
+                const SizedBox(width: 8),
+              ],
+            ),
       body: ekranlar[sekme],
+      // YENİ: Sadece ikonlu alt menü (yazılar gizli, basılı tutunca görünür)
       bottomNavigationBar: NavigationBar(
         selectedIndex: sekme,
+        labelBehavior: NavigationDestinationLabelBehavior.alwaysHide,
+        height: 68,
         onDestinationSelected: (i) {
           setState(() {
             sekme = i;
           });
         },
         destinations: const [
-          NavigationDestination(icon: Icon(Icons.style), label: 'Kartlar'),
-          NavigationDestination(icon: Icon(Icons.edit), label: 'Test'),
-          NavigationDestination(icon: Icon(Icons.inventory_2), label: 'Paketler'),
-          NavigationDestination(icon: Icon(Icons.wb_sunny), label: 'Hasat'),
+          NavigationDestination(
+            icon: Icon(Icons.home_outlined, color: kSoluk),
+            selectedIcon: Icon(Icons.home_rounded, color: kTuruncu),
+            label: 'Ana sayfa',
+            tooltip: 'Ana sayfa',
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.style_outlined, color: kSoluk),
+            selectedIcon: Icon(Icons.style, color: kTuruncu),
+            label: 'Kartlar',
+            tooltip: 'Kartlar',
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.edit_outlined, color: kSoluk),
+            selectedIcon: Icon(Icons.edit, color: kTuruncu),
+            label: 'Test',
+            tooltip: 'Test',
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.inventory_2_outlined, color: kSoluk),
+            selectedIcon: Icon(Icons.inventory_2, color: kTuruncu),
+            label: 'Paketler',
+            tooltip: 'Paketler',
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.wb_sunny_outlined, color: kSoluk),
+            selectedIcon: Icon(Icons.wb_sunny, color: kTuruncu),
+            label: 'Hasat',
+            tooltip: 'Hasat',
+          ),
         ],
       ),
     );

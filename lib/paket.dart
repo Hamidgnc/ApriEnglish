@@ -586,3 +586,30 @@ const kelimePaketi = <List<String>>[
   ['wonder', 'merak etmek', 'B1'],
   ['worth', 'değer, değerinde', 'B1'],
 ];
+
+// Ders başlıkları: her seviyedeki kelimeler sırayla 10'arlı derslere bölünür,
+// N. dersin adı listedeki N. başlıktır. Liste kısa kalırsa "Ders N" yazılır.
+const dersBasliklari = <String, List<String>>{
+  'A1': [
+    'Yiyecek ve içecek', 'Sofrada', 'Evde', 'Eşyalar ve ulaşım',
+    'Şehir ve okul', 'Aile', 'Zaman', 'Gün ve gökyüzü',
+    'Doğa ve hayvanlar', 'Renkler', 'Sıfatlar 1', 'Sıfatlar 2',
+    'Fiiller 1', 'Fiiller 2', 'Fiiller 3', 'Fiiller 4',
+    'İş ve vücut', 'Vücut ve giyim', 'Eğlence', 'Günlük sözler',
+    'Sıklık ve hava', 'Mevsimler ve tatil',
+  ],
+  'A2': [
+    'Seyahat', 'Buluşmalar', 'Akrabalar', 'Şehirde',
+    'Ev eşyaları', 'Medya ve sanat', 'Meslekler', 'İş ve sağlık',
+    'Duygular', 'Zıtlıklar 1', 'Zıtlıklar 2', 'Kişilik',
+    'Ne zaman?', 'Zihin fiilleri', 'Duyular ve hareket', 'Hareket fiilleri',
+    'Seçimler', 'Gönder ve al', 'Doğa 1', 'Doğa 2',
+    'Vahşi hayvanlar',
+  ],
+  'B1': [
+    'Hedefler', 'Dikkat', 'Zorluklar', 'Düşünmek',
+    'Eğitim ve ekonomi', 'Çevre', 'Deneyim', 'Toplum ve gelişim',
+    'Bilgi', 'Fikirler', 'Hazırlık', 'Üretmek',
+    'Sorumluluk', 'Başarı', 'Güven ve değer',
+  ],
+};
