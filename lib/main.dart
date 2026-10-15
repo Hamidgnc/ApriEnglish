@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:flutter_tts/flutter_tts.dart';
+import 'package:http/http.dart' as http; // YENİ: internete mesaj göndermek için
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:timezone/data/latest_all.dart' as tzdata;
 import 'package:timezone/timezone.dart' as tz;
@@ -421,7 +422,7 @@ class _AnaSayfaState extends State<AnaSayfa> {
   // Test ekranı
   // YENİ: Test turu
   static const turUzunlugu = 10;
-  String testDurumu = 'secim'; // 'secim' -> 'soru' -> 'sonuc'
+  String testDurumu = 'secim'; // 'secim' -> 'soru' -> 'sonuc', ya da 'kartlar'
   String testModu = 'secmeli'; // 'secmeli', 'yazma', 'dinle'
   bool tersYon = false; // false: İngilizce -> Türkçe, true: Türkçe -> İngilizce
   List<Kelime> turSorulari = [];
@@ -634,6 +635,18 @@ class _AnaSayfaState extends State<AnaSayfa> {
     kelimeleriKaydet();
   }
 
+  // YENİ: Günlük tekrar: önce kurutma zamanı gelenler, sonra derste/kartta
+  // yanlış yapılıp henüz olgunlaşmayanlar. En fazla 10 kelime.
+  List<Kelime> tekrarKelimeleri() {
+    final zamaniGelen =
+        kelimeler.where((k) => k.seviye >= 3 && k.tekrar != null && zamaniGeldi(k));
+    final zayif = kelimeler.where((k) => k.seviye < 3 && k.yanlis > 0);
+    return [...zamaniGelen, ...zayif].take(10).toList();
+  }
+
+  // Tekrar kartı varsa ana sayfada en başta durur, dersler bir sağa kayar
+  int get tekrarKaymasi => tekrarKelimeleri().isEmpty ? 0 : 1;
+
   // Henüz bitirilmemiş ilk dersin sırası (hepsi bittiyse sonuncusu)
   int siradakiDers() {
     final liste = gorunenDersler;
@@ -652,7 +665,8 @@ class _AnaSayfaState extends State<AnaSayfa> {
     }
     dersKaydirici = PageController(
       viewportFraction: 0.86, // yandaki kartın kenarı görünsün
-      initialPage: siradakiDers(),
+      // Tekrar bekleyen kelime varsa önce tekrar kartı görünsün
+      initialPage: tekrarKaymasi == 1 ? 0 : siradakiDers(),
       keepPage: false, // eski sayfa numarasını hatırlamasın
     );
   }
@@ -678,8 +692,10 @@ class _AnaSayfaState extends State<AnaSayfa> {
           bilemedi(kelime);
         }
       });
-      // Tekrar oynanırsa en iyi puan kalır
-      dersPuanlari[d.kimlik] = max(dersPuanlari[d.kimlik] ?? 0, sonuc.puan);
+      // Tekrar oynanırsa en iyi puan kalır (günlük tekrarın puanı tutulmaz)
+      if (d.no > 0) {
+        dersPuanlari[d.kimlik] = max(dersPuanlari[d.kimlik] ?? 0, sonuc.puan);
+      }
       aktif = kelimeSec();
     });
     await kelimeleriKaydet();
@@ -687,7 +703,7 @@ class _AnaSayfaState extends State<AnaSayfa> {
     final kaydirici = dersKaydirici;
     if (kaydirici != null && kaydirici.hasClients) {
       kaydirici.animateToPage(
-        siradakiDers(),
+        siradakiDers() + tekrarKaymasi,
         duration: const Duration(milliseconds: 600),
         curve: Curves.easeInOut,
       );
@@ -1021,14 +1037,33 @@ class _AnaSayfaState extends State<AnaSayfa> {
     kelimeleriKaydet();
   }
 
+  // Kelimeyi siler, alttaki mesajdan "Geri al" ile eski yerine döner
   void kelimeSil(Kelime k) {
     if (kelimeler.length <= 1) return;
+    final sira = kelimeler.indexOf(k); // geri alınca aynı yere koymak için
     setState(() {
       kelimeler.remove(k);
       aktif = kelimeSec();
       dersleriOlustur(); // silinen kelime dersten de çıksın
     });
     kelimeleriKaydet();
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar() // önceki mesaj varsa kapat
+      ..showSnackBar(
+        SnackBar(
+          content: Text("'${k.ing}' silindi"),
+          action: SnackBarAction(
+            label: 'Geri al',
+            onPressed: () {
+              setState(() {
+                kelimeler.insert(min(sira, kelimeler.length), k);
+                dersleriOlustur();
+              });
+              kelimeleriKaydet();
+            },
+          ),
+        ),
+      );
   }
 
   // ---------------- Ekranlar ----------------
@@ -1037,6 +1072,8 @@ class _AnaSayfaState extends State<AnaSayfa> {
 
   Widget anaSayfaEkrani() {
     final liste = gorunenDersler;
+    final tekrar = tekrarKelimeleri();
+    final kayma = tekrar.isEmpty ? 0 : 1;
     return SafeArea(
       child: Column(
         children: [
@@ -1051,8 +1088,11 @@ class _AnaSayfaState extends State<AnaSayfa> {
             child: PageView.builder(
               key: ValueKey(aktifDuzey), // seviye değişince kaydırıcı sıfırdan kurulsun
               controller: dersKaydirici,
-              itemCount: liste.length,
-              itemBuilder: (context, i) => dersKarti(liste[i]),
+              itemCount: liste.length + kayma,
+              itemBuilder: (context, i) {
+                if (kayma == 1 && i == 0) return tekrarKarti(tekrar);
+                return dersKarti(liste[i - kayma]);
+              },
             ),
           ),
         ],
@@ -1239,6 +1279,94 @@ class _AnaSayfaState extends State<AnaSayfa> {
     );
   }
 
+  // YENİ: Günlük tekrar kartı (ders kartıyla aynı boyda, manzarasız)
+  Widget tekrarKarti(List<Kelime> tekrar) {
+    return LayoutBuilder(
+      builder: (context, alan) {
+        final cap = min(alan.maxWidth - 16, alan.maxHeight - 34);
+        return Center(
+          child: SizedBox(
+            width: cap,
+            height: cap + 18,
+            child: Stack(
+              alignment: Alignment.topCenter,
+              children: [
+                Positioned(
+                  top: 18,
+                  child: Container(
+                    width: cap,
+                    height: cap,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: kKart,
+                      border: Border.all(color: kTuruncu, width: 3),
+                    ),
+                    child: Column(
+                      children: [
+                        SizedBox(height: cap * 0.15),
+                        const Icon(Icons.wb_sunny_outlined, color: kTuruncu, size: 46),
+                        const SizedBox(height: 10),
+                        const Text(
+                          'Günlük tekrar',
+                          style: TextStyle(fontSize: 28, fontWeight: FontWeight.w900),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          '${tekrar.length} kelime seni bekliyor',
+                          style: const TextStyle(
+                            fontSize: 15,
+                            fontWeight: FontWeight.w700,
+                            color: kSoluk,
+                          ),
+                        ),
+                        const Spacer(),
+                        SizedBox(
+                          width: cap * 0.56,
+                          height: 52,
+                          child: FilledButton(
+                            onPressed: () =>
+                                dersiBaslat(Ders('Tekrar', 0, 'Günlük tekrar', tekrar)),
+                            style: FilledButton.styleFrom(
+                              backgroundColor: kTuruncu,
+                              foregroundColor: const Color(0xFF1A0E05),
+                              textStyle: const TextStyle(
+                                fontFamily: 'Nunito',
+                                fontSize: 18,
+                                fontWeight: FontWeight.w900,
+                              ),
+                            ),
+                            child: const Text('Başla'),
+                          ),
+                        ),
+                        SizedBox(height: cap * 0.11),
+                      ],
+                    ),
+                  ),
+                ),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
+                  decoration: BoxDecoration(
+                    color: kTuruncu,
+                    borderRadius: BorderRadius.circular(16),
+                  ),
+                  child: const Text(
+                    'TEKRAR ZAMANI',
+                    style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w900,
+                      letterSpacing: 1,
+                      color: Color(0xFF1A0E05),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
   // Büyük yuvarlak ders kartı
   Widget dersKarti(Ders d) {
     final puan = dersPuanlari[d.kimlik] ?? 0;
@@ -1362,61 +1490,9 @@ class _AnaSayfaState extends State<AnaSayfa> {
 
   // ===== Eski ekranlar (sırayla yenilenecek) =====
 
-  Widget hedefSatiri() {
-    final hedef = profil.hedef;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        if (profil.ad.isNotEmpty)
-          Padding(
-            padding: const EdgeInsets.only(bottom: 6),
-            child: Text(
-              'Merhaba ${profil.ad}! 👋',
-              style: const TextStyle(
-                fontSize: 20,
-                fontWeight: FontWeight.bold,
-                color: kParlakTuruncu,
-              ),
-            ),
-          ),
-        Text(
-          bugun >= hedef
-              ? 'Bugünkü hedef tamam! 🎉 ($bugun / $hedef)'
-              : 'Bugünkü hedef: $bugun / $hedef',
-          style: const TextStyle(color: kSoluk, fontSize: 15),
-        ),
-        const SizedBox(height: 10),
-        // Hedef küçükse kayısı dizisi, büyükse ilerleme çubuğu
-        if (hedef <= 12)
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: List.generate(hedef, (i) {
-              return Container(
-                width: 24,
-                height: 24,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  color: i < bugun ? kTuruncu : Colors.transparent,
-                  border: Border.all(color: kTuruncu, width: 2.5),
-                ),
-              );
-            }),
-          )
-        else
-          ClipRRect(
-            borderRadius: BorderRadius.circular(8),
-            child: LinearProgressIndicator(
-              value: min(1.0, bugun / hedef),
-              minHeight: 14,
-              backgroundColor: kVurguZemin,
-              color: kTuruncu,
-            ),
-          ),
-      ],
-    );
-  }
-
+  // Kartlar sekmesindeki çevrilebilir kayısı kartı. Boyu ekrana göre esner.
   Widget kayisiKart() {
+    final renkler = durumRenkleri(aktif.seviye);
     return GestureDetector(
       onTap: () {
         setState(() {
@@ -1425,62 +1501,94 @@ class _AnaSayfaState extends State<AnaSayfa> {
       },
       child: Container(
         width: double.infinity,
-        height: 400,
         decoration: BoxDecoration(
           color: kKart,
           borderRadius: BorderRadius.circular(32),
-          boxShadow: const [
-            BoxShadow(color: Colors.black12, blurRadius: 20, offset: Offset(0, 8)),
-          ],
         ),
         child: Column(
           children: [
+            const SizedBox(height: 18),
+            // Kelimenin aşaması: ham, yarı olgun, kurutmada, kuru kayısı
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
+              decoration: BoxDecoration(
+                color: kCizgi,
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Container(
+                    width: 10,
+                    height: 10,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: renkler[1],
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Text(
+                    aktif.seviye >= 3 && zamaniGeldi(aktif)
+                        ? 'TEKRAR ZAMANI'
+                        : durumAdi(aktif.seviye).toUpperCase(),
+                    style: const TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w900,
+                      letterSpacing: 1.2,
+                      color: kSoluk,
+                    ),
+                  ),
+                ],
+              ),
+            ),
             Expanded(
-              child: Center(
-                child: SizedBox(
-                  width: 240,
-                  height: 270,
-                  child: TweenAnimationBuilder<double>(
-                    tween: Tween(end: onYuz ? 0 : 1),
-                    duration: const Duration(milliseconds: 350),
-                    builder: (context, v, _) {
-                      return CustomPaint(
-                        painter: KayisiCizim(renk: kTuruncu, doluluk: v),
-                        child: Padding(
-                          padding: const EdgeInsets.fromLTRB(36, 90, 36, 20),
-                          child: Center(
-                            child: FittedBox(
-                              fit: BoxFit.scaleDown,
-                              child: Text(
-                                onYuz ? aktif.ing : aktif.anlam,
-                                style: TextStyle(
-                                  fontSize: 40,
-                                  fontWeight: FontWeight.bold,
-                                  color: Color.lerp(kTuruncu, Colors.white, v),
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                // Kayısı, eldeki alana sığacak kadar büyük çizilir.
+                // Center olmazsa AspectRatio sıkı ölçüye uymak zorunda kalır, oran bozulur.
+                child: Center(
+                  child: AspectRatio(
+                    aspectRatio: 240 / 270,
+                    child: TweenAnimationBuilder<double>(
+                      tween: Tween(end: onYuz ? 0 : 1),
+                      duration: const Duration(milliseconds: 350),
+                      builder: (context, v, _) {
+                        return CustomPaint(
+                          painter: KayisiCizim(renk: kTuruncu, doluluk: v),
+                          child: Padding(
+                            padding: const EdgeInsets.fromLTRB(30, 80, 30, 16),
+                            child: Center(
+                              child: FittedBox(
+                                fit: BoxFit.scaleDown,
+                                child: Text(
+                                  onYuz ? aktif.ing : aktif.anlam,
+                                  style: TextStyle(
+                                    fontSize: 40,
+                                    fontWeight: FontWeight.w900,
+                                    color: Color.lerp(kTuruncu, const Color(0xFF1A0E05), v),
+                                  ),
                                 ),
                               ),
                             ),
                           ),
-                        ),
-                      );
-                    },
+                        );
+                      },
+                    ),
                   ),
                 ),
               ),
             ),
             TextButton.icon(
               onPressed: () => oku(aktif.ing),
-              icon: const Icon(Icons.volume_up, color: kTuruncu),
+              icon: const Icon(Icons.volume_up_rounded, color: kTuruncu),
               label: const Text(
                 'dinle',
-                style: TextStyle(color: kTuruncu, fontSize: 16),
+                style: TextStyle(color: kTuruncu, fontSize: 16, fontWeight: FontWeight.w800),
               ),
             ),
-            Text(
-              aktif.seviye >= 3
-                  ? '☀️ tekrar zamanı: hatırlıyor musun?'
-                  : 'karta dokun ve çevir',
-              style: const TextStyle(color: Color(0xFF7E766E), fontSize: 14),
+            const Text(
+              'karta dokun ve çevir',
+              style: TextStyle(color: Color(0xFF7E766E), fontSize: 14),
             ),
             const SizedBox(height: 16),
           ],
@@ -1489,62 +1597,66 @@ class _AnaSayfaState extends State<AnaSayfa> {
     );
   }
 
-  Widget yuvarlakButon({
-    required IconData ikon,
-    required Color renk,
-    required Color zemin,
-    required String etiket,
-    required VoidCallback onTap,
-  }) {
-    return Column(
-      children: [
-        Material(
-          color: zemin,
-          elevation: 4,
-          shape: CircleBorder(
-            side: BorderSide(color: renk.withValues(alpha: 0.25), width: 2),
-          ),
-          child: InkWell(
-            customBorder: const CircleBorder(),
-            onTap: onTap,
-            child: SizedBox(
-              width: 76,
-              height: 76,
-              child: Icon(ikon, color: renk, size: 38),
+  // Ders ekranındakiyle aynı tarz geniş buton
+  Widget kartButonu(String metin, {required bool dolu, required VoidCallback onTap}) {
+    return SizedBox(
+      height: 58,
+      child: dolu
+          ? FilledButton(
+              onPressed: onTap,
+              style: FilledButton.styleFrom(
+                backgroundColor: kTuruncu,
+                foregroundColor: const Color(0xFF1A0E05),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+                textStyle: const TextStyle(
+                  fontFamily: 'Nunito',
+                  fontSize: 17,
+                  fontWeight: FontWeight.w900,
+                ),
+              ),
+              child: Text(metin),
+            )
+          : OutlinedButton(
+              onPressed: onTap,
+              style: OutlinedButton.styleFrom(
+                foregroundColor: kYazi,
+                side: const BorderSide(color: kCizgi, width: 2),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+                textStyle: const TextStyle(
+                  fontFamily: 'Nunito',
+                  fontSize: 17,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+              child: Text(metin),
             ),
-          ),
-        ),
-        const SizedBox(height: 8),
-        Text(etiket, style: const TextStyle(color: kSoluk)),
-      ],
     );
   }
 
+  // Kartlar sekmesi: kart ekranın kalanını doldurur, butonlar hep görünür
   Widget kartEkrani() {
-    return SingleChildScrollView(
-      padding: const EdgeInsets.fromLTRB(24, 8, 24, 24),
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(20, 4, 20, 20),
       child: Column(
         children: [
-          hedefSatiri(),
-          const SizedBox(height: 24),
-          kayisiKart(),
-          const SizedBox(height: 28),
+          Expanded(child: kayisiKart()),
+          const SizedBox(height: 20),
           Row(
-            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
             children: [
-              yuvarlakButon(
-                ikon: Icons.close,
-                renk: const Color(0xFFE8674A),
-                zemin: kKart,
-                etiket: 'Bilmiyorum',
-                onTap: () => kartCevapla(false),
+              Expanded(
+                child: kartButonu(
+                  'Bilmiyorum',
+                  dolu: false,
+                  onTap: () => kartCevapla(false),
+                ),
               ),
-              yuvarlakButon(
-                ikon: Icons.check,
-                renk: Colors.white,
-                zemin: kTuruncu,
-                etiket: 'Biliyorum',
-                onTap: () => kartCevapla(true),
+              const SizedBox(width: 12),
+              Expanded(
+                child: kartButonu(
+                  'Biliyorum',
+                  dolu: true,
+                  onTap: () => kartCevapla(true),
+                ),
               ),
             ],
           ),
@@ -1554,35 +1666,38 @@ class _AnaSayfaState extends State<AnaSayfa> {
   }
 
   // Test sekmesi: duruma göre mod seçimi, soru ya da sonuç ekranı
+  // Pratik sekmesi: liste, kartlar, soru ya da sonuç ekranı
   Widget testEkrani() {
+    if (testDurumu == 'kartlar') return kartEkrani();
     if (testDurumu == 'soru') return soruEkrani();
     if (testDurumu == 'sonuc') return sonucEkrani();
     return modSecimEkrani();
   }
 
-  Widget modKarti(String mod, IconData ikon, String baslik, String aciklama) {
-    return Container(
-      margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+  // Pratik listesindeki büyük satır: yuvarlak ikon, kalın başlık, açıklama
+  Widget modKarti(IconData ikon, String baslik, String aciklama, VoidCallback onTap) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 7),
       child: Material(
         color: kKart,
-        borderRadius: BorderRadius.circular(20),
+        borderRadius: BorderRadius.circular(22),
         child: InkWell(
-          borderRadius: BorderRadius.circular(20),
-          onTap: () => turBaslat(mod),
+          borderRadius: BorderRadius.circular(22),
+          onTap: onTap,
           child: Padding(
             padding: const EdgeInsets.all(16),
             child: Row(
               children: [
                 Container(
-                  width: 56,
-                  height: 56,
+                  width: 68,
+                  height: 68,
                   decoration: const BoxDecoration(
                     color: kVurguZemin,
                     shape: BoxShape.circle,
                   ),
-                  child: Icon(ikon, color: kParlakTuruncu, size: 30),
+                  child: Icon(ikon, color: kTuruncu, size: 34),
                 ),
-                const SizedBox(width: 16),
+                const SizedBox(width: 18),
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
@@ -1590,16 +1705,23 @@ class _AnaSayfaState extends State<AnaSayfa> {
                       Text(
                         baslik,
                         style: const TextStyle(
-                          fontSize: 18,
-                          fontWeight: FontWeight.bold,
+                          fontSize: 20,
+                          fontWeight: FontWeight.w900,
+                          letterSpacing: 0.5,
                         ),
                       ),
-                      const SizedBox(height: 2),
-                      Text(aciklama, style: const TextStyle(color: kSoluk)),
+                      const SizedBox(height: 4),
+                      Text(
+                        aciklama,
+                        style: const TextStyle(
+                          fontSize: 15,
+                          fontWeight: FontWeight.w600,
+                          color: kSoluk,
+                        ),
+                      ),
                     ],
                   ),
                 ),
-                const Icon(Icons.chevron_right, color: kSoluk),
               ],
             ),
           ),
@@ -1612,29 +1734,35 @@ class _AnaSayfaState extends State<AnaSayfa> {
     return ListView(
       padding: const EdgeInsets.only(top: 4, bottom: 24),
       children: [
-        const Padding(
-          padding: EdgeInsets.fromLTRB(20, 4, 20, 8),
-          child: Text(
-            'Nasıl çalışmak istersin?',
-            style: TextStyle(
-              fontSize: 20,
-              fontWeight: FontWeight.bold,
-              color: kParlakTuruncu,
-            ),
-          ),
+        modKarti(
+          Icons.style_rounded,
+          'KARTLAR',
+          'Kartı çevir, bildiğini işaretle',
+          () => setState(() => testDurumu = 'kartlar'),
         ),
-        modKarti('secmeli', Icons.touch_app, 'Çoktan seçmeli', '4 şıktan doğruyu seç'),
-        modKarti('yazma', Icons.keyboard, 'Yazarak', 'Cevabı kendin yaz, en kalıcısı'),
-        modKarti('dinle', Icons.hearing, 'Dinle ve seç', 'Kelimeyi sadece duy, anlamını bul'),
+        modKarti(
+          Icons.checklist_rounded,
+          'ÇOKTAN SEÇMELİ',
+          '4 şıktan doğruyu seç',
+          () => turBaslat('secmeli'),
+        ),
+        modKarti(
+          Icons.keyboard_rounded,
+          'YAZ',
+          'Cevabı kendin yaz, en kalıcısı',
+          () => turBaslat('yazma'),
+        ),
+        modKarti(
+          Icons.headphones_rounded,
+          'DİNLE',
+          'Sadece duy, anlamını bul',
+          () => turBaslat('dinle'),
+        ),
+        bolumBasligi('SORU YÖNÜ'),
         kutu(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Text(
-                'Yön',
-                style: TextStyle(fontWeight: FontWeight.bold, color: kSoluk),
-              ),
-              const SizedBox(height: 8),
               Wrap(
                 spacing: 8,
                 children: [
@@ -1650,20 +1778,13 @@ class _AnaSayfaState extends State<AnaSayfa> {
                   ),
                 ],
               ),
-              const SizedBox(height: 6),
-              const Text(
+              const SizedBox(height: 8),
+              Text(
+                'Her tur $turUzunlugu soru, açık seviyelerinden sorulur. '
                 'Dinle modunda kelime hep İngilizce okunur.',
-                style: TextStyle(fontSize: 12, color: kSoluk),
+                style: const TextStyle(fontSize: 13, color: kSoluk),
               ),
             ],
-          ),
-        ),
-        Padding(
-          padding: const EdgeInsets.all(16),
-          child: Text(
-            'Her tur $turUzunlugu soru. Açık seviyelerden sorulur.',
-            textAlign: TextAlign.center,
-            style: const TextStyle(color: kSoluk),
           ),
         ),
       ],
@@ -1696,7 +1817,7 @@ class _AnaSayfaState extends State<AnaSayfa> {
           onTap: cevaplandi ? null : () => sikSec(sik),
           child: Container(
             width: double.infinity,
-            padding: const EdgeInsets.symmetric(vertical: 18, horizontal: 20),
+            padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 20),
             child: Text(
               sik,
               textAlign: TextAlign.center,
@@ -1718,13 +1839,10 @@ class _AnaSayfaState extends State<AnaSayfa> {
     final dinleModu = testModu == 'dinle';
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.symmetric(vertical: 28, horizontal: 20),
+      padding: const EdgeInsets.symmetric(vertical: 22, horizontal: 20),
       decoration: BoxDecoration(
         color: kKart,
         borderRadius: BorderRadius.circular(28),
-        boxShadow: const [
-          BoxShadow(color: Colors.black12, blurRadius: 16, offset: Offset(0, 6)),
-        ],
       ),
       child: Column(
         children: [
@@ -1743,9 +1861,9 @@ class _AnaSayfaState extends State<AnaSayfa> {
                 customBorder: const CircleBorder(),
                 onTap: () => oku(k.ing),
                 child: const SizedBox(
-                  width: 96,
-                  height: 96,
-                  child: Icon(Icons.volume_up, color: Colors.white, size: 48),
+                  width: 80,
+                  height: 80,
+                  child: Icon(Icons.volume_up_rounded, color: Color(0xFF1A0E05), size: 40),
                 ),
               ),
             ),
@@ -1776,133 +1894,161 @@ class _AnaSayfaState extends State<AnaSayfa> {
     );
   }
 
-  // Doğru/yanlış kutusu ve sonraki butonu
+  // Doğru/yanlış paneli: ekranın altına sabit, içinde devam butonu
   Widget geriBildirim() {
     final k = soru;
     final renk = sonCevapDogru ? const Color(0xFF4CC37A) : const Color(0xFFE8674A);
     final zemin = sonCevapDogru ? const Color(0xFF14231A) : const Color(0xFF2A1715);
-    return Column(
-      children: [
-        Container(
-          width: double.infinity,
-          padding: const EdgeInsets.all(16),
-          decoration: BoxDecoration(
-            color: zemin,
-            borderRadius: BorderRadius.circular(18),
-          ),
-          child: Row(
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: zemin,
+        borderRadius: BorderRadius.circular(22),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
             children: [
-              Icon(
-                sonCevapDogru ? Icons.check_circle : Icons.cancel,
-                color: renk,
-                size: 32,
+              CircleAvatar(
+                radius: 18,
+                backgroundColor: renk,
+                child: Icon(
+                  sonCevapDogru ? Icons.check_rounded : Icons.close_rounded,
+                  color: kZemin,
+                  size: 22,
+                ),
               ),
               const SizedBox(width: 12),
               Expanded(
                 child: Text(
-                  sonCevapDogru ? 'Doğru! 🎉' : 'Doğrusu: ${k.ing} = ${k.anlam}',
+                  sonCevapDogru ? 'Harika!' : 'Doğrusu: ${k.ing} = ${k.anlam}',
                   style: TextStyle(
-                    fontSize: 17,
-                    fontWeight: FontWeight.bold,
+                    fontSize: 18,
+                    fontWeight: FontWeight.w900,
                     color: renk,
                   ),
                 ),
               ),
             ],
           ),
-        ),
-        const SizedBox(height: 14),
-        SizedBox(
-          width: double.infinity,
-          height: 56,
-          child: FilledButton(
-            onPressed: sonrakiSoru,
-            child: Text(
-              soruNo + 1 >= turSorulari.length ? 'Sonuçları gör' : 'Sonraki →',
-              style: const TextStyle(fontSize: 18),
+          const SizedBox(height: 14),
+          SizedBox(
+            height: 56,
+            child: FilledButton(
+              onPressed: sonrakiSoru,
+              style: FilledButton.styleFrom(
+                backgroundColor: renk,
+                foregroundColor: kZemin,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+                textStyle: const TextStyle(
+                  fontFamily: 'Nunito',
+                  fontSize: 17,
+                  fontWeight: FontWeight.w900,
+                ),
+              ),
+              child: Text(
+                soruNo + 1 >= turSorulari.length ? 'Sonuçları gör' : 'Devam',
+              ),
             ),
           ),
-        ),
-      ],
+        ],
+      ),
     );
   }
 
+  // Soru ekranı: üstte ilerleme, ortada soru ve şıklar, altta sabit panel
   Widget soruEkrani() {
-    return SingleChildScrollView(
-      padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
-      child: Column(
-        children: [
-          Row(
-            children: [
-              IconButton(
-                icon: const Icon(Icons.close, color: kSoluk),
-                onPressed: () => setState(() => testDurumu = 'secim'),
-              ),
-              Expanded(
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(8),
-                  child: LinearProgressIndicator(
-                    value: (soruNo + 1) / turSorulari.length,
-                    minHeight: 10,
-                    backgroundColor: kVurguZemin,
-                    color: kTuruncu,
+    return SafeArea(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(8, 8, 16, 16),
+        child: Column(
+          children: [
+            Row(
+              children: [
+                IconButton(
+                  tooltip: 'Turdan çık',
+                  icon: const Icon(Icons.close_rounded, color: kSoluk, size: 28),
+                  onPressed: () => setState(() => testDurumu = 'secim'),
+                ),
+                Expanded(
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(6),
+                    child: LinearProgressIndicator(
+                      value: (soruNo + 1) / turSorulari.length,
+                      minHeight: 12,
+                      backgroundColor: kCizgi,
+                      color: kTuruncu,
+                    ),
                   ),
                 ),
-              ),
-              const SizedBox(width: 12),
-              Text(
-                '${soruNo + 1}/${turSorulari.length}',
-                style: const TextStyle(fontWeight: FontWeight.bold, color: kSoluk),
-              ),
-            ],
-          ),
-          const SizedBox(height: 16),
-          soruKarti(),
-          const SizedBox(height: 20),
-          if (testModu == 'yazma') ...[
-            TextField(
-              controller: cevapKutusu,
-              enabled: !cevaplandi,
-              textAlign: TextAlign.center,
-              style: const TextStyle(fontSize: 20),
-              decoration: InputDecoration(
-                hintText: tersMi() ? 'İngilizcesini yaz' : 'Türkçesini yaz',
-                filled: true,
-                fillColor: kKart,
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(18),
-                  borderSide: BorderSide.none,
+                const SizedBox(width: 12),
+                Text(
+                  '${soruNo + 1}/${turSorulari.length}',
+                  style: const TextStyle(fontWeight: FontWeight.w800, color: kSoluk),
                 ),
-              ),
-              onSubmitted: (_) => yaziKontrol(),
+              ],
             ),
-            const SizedBox(height: 12),
-            if (!cevaplandi)
-              Row(
-                children: [
-                  Expanded(
-                    child: OutlinedButton(
-                      onPressed: () => cevapla(false),
-                      child: const Text('Bilmiyorum'),
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: FilledButton(
-                      onPressed: yaziKontrol,
-                      child: const Text('Kontrol et'),
-                    ),
-                  ),
-                ],
+            const SizedBox(height: 16),
+            // Ortadaki kısım: sığmazsa (ör. klavye açıkken) sadece burası kayar
+            Expanded(
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.only(left: 8),
+                child: Column(
+                  children: [
+                    soruKarti(),
+                    const SizedBox(height: 20),
+                    if (testModu == 'yazma') ...[
+                      TextField(
+                        controller: cevapKutusu,
+                        enabled: !cevaplandi,
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(fontSize: 20),
+                        decoration: InputDecoration(
+                          hintText: tersMi() ? 'İngilizcesini yaz' : 'Türkçesini yaz',
+                          filled: true,
+                          fillColor: kKart,
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(18),
+                            borderSide: BorderSide.none,
+                          ),
+                        ),
+                        onSubmitted: (_) => yaziKontrol(),
+                      ),
+                      const SizedBox(height: 12),
+                      if (!cevaplandi)
+                        Row(
+                          children: [
+                            Expanded(
+                              child: OutlinedButton(
+                                onPressed: () => cevapla(false),
+                                child: const Text('Bilmiyorum'),
+                              ),
+                            ),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: FilledButton(
+                                onPressed: yaziKontrol,
+                                child: const Text('Kontrol et'),
+                              ),
+                            ),
+                          ],
+                        ),
+                    ] else ...[
+                      for (final sik in siklar) sikButonu(sik),
+                    ],
+                  ],
+                ),
               ),
-          ] else ...[
-            for (final sik in siklar) sikButonu(sik),
+            ),
+            // Cevap verilince panel en altta, kaydırmadan görünür
+            if (cevaplandi)
+              Padding(
+                padding: const EdgeInsets.only(left: 8, top: 8),
+                child: geriBildirim(),
+              ),
           ],
-          if (cevaplandi) ...[
-            const SizedBox(height: 8),
-            geriBildirim(),
-          ],
-        ],
+        ),
       ),
     );
   }
@@ -2002,7 +2148,7 @@ class _AnaSayfaState extends State<AnaSayfa> {
   }
 
   // YENİ: Bir seviyenin kartı: ad, ilerleme çubuğu, aç/kapa düğmesi
-  Widget paketKarti(String duzey, String ad) {
+  Widget paketKarti(String duzey, String ad, [VoidCallback? yenile]) {
     final liste = kelimeler.where((k) => k.duzey == duzey).toList();
     final toplam = liste.length;
     final ogrenilen = liste.where((k) => k.seviye >= 3).length;
@@ -2050,7 +2196,12 @@ class _AnaSayfaState extends State<AnaSayfa> {
               ),
               Switch(
                 value: seciliDuzeyler.contains(duzey),
-                onChanged: toplam == 0 ? null : (acik) => duzeyDegistir(duzey, acik),
+                onChanged: toplam == 0
+                    ? null
+                    : (acik) {
+                        duzeyDegistir(duzey, acik);
+                        yenile?.call(); // ayrı sayfadaysak onu da yenile
+                      },
               ),
             ],
           ),
@@ -2069,117 +2220,239 @@ class _AnaSayfaState extends State<AnaSayfa> {
     );
   }
 
-  // ===== YENİ: Profil sekmesi (Paketler sekmesi de buraya taşındı) =====
+  // ===== YENİ: Profil sekmesi: düz liste, satırlar ince çizgiyle ayrılır =====
 
   Widget profilEkrani() {
     final ogrenilen = kelimeler.where((k) => k.seviye >= 3).length;
     final saat =
         '${profil.saat.toString().padLeft(2, '0')}:${profil.dakika.toString().padLeft(2, '0')}';
     return ListView(
-      padding: const EdgeInsets.only(top: 4, bottom: 28),
+      padding: const EdgeInsets.only(bottom: 28),
       children: [
-        // Profil kartı: dokununca Hesabım sayfası açılır
-        kutu(
-          child: ListTile(
-            contentPadding: EdgeInsets.zero,
+        // Üstte büyük avatar ve ad: dokununca Hesabım açılır
+        InkWell(
+          onTap: hesabiAc,
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(20, 8, 12, 20),
+            child: Row(
+              children: [
+                CircleAvatar(
+                  radius: 34,
+                  backgroundColor: kVurguZemin,
+                  child: Text(profil.avatar, style: const TextStyle(fontSize: 34)),
+                ),
+                const SizedBox(width: 16),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        profil.ad.isEmpty ? 'Adını ekle' : profil.ad,
+                        style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w900),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        '$ogrenilen kelime öğrendi · ${seriHesapla()} gün seri',
+                        style: const TextStyle(color: kSoluk, fontWeight: FontWeight.w600),
+                      ),
+                    ],
+                  ),
+                ),
+                const Icon(Icons.chevron_right_rounded, color: Color(0xFF7E766E)),
+              ],
+            ),
+          ),
+        ),
+
+        satirGrubu([
+          duzSatir(
+            ikon: Icons.school_outlined,
+            ad: 'Seviyeler',
+            deger: seviyeOzeti(),
+            onTap: seviyeleriAc,
+          ),
+          duzSatir(
+            ikon: Icons.flag_outlined,
+            ad: 'Günlük hedef',
+            deger: '${profil.hedef} kelime',
             onTap: hesabiAc,
-            leading: CircleAvatar(
-              radius: 30,
-              backgroundColor: kVurguZemin,
-              child: Text(profil.avatar, style: const TextStyle(fontSize: 30)),
-            ),
-            title: Text(
-              profil.ad.isEmpty ? 'Adını ekle' : profil.ad,
-              style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w900),
-            ),
-            subtitle: Text(
-              '$ogrenilen kelime öğrendi · ${seriHesapla()} gün seri',
-              style: const TextStyle(color: kSoluk, fontWeight: FontWeight.w600),
-            ),
-            trailing: const Icon(Icons.chevron_right_rounded, color: Color(0xFF7E766E)),
           ),
-        ),
-
-        bolumBasligi('ÇALIŞMA'),
-        kutu(
-          child: Column(
-            children: [
-              ayarSatiri(
-                ikon: Icons.flag_outlined,
-                ad: 'Günlük hedef',
-                deger: '${profil.hedef} kelime',
-                onTap: hesabiAc,
-              ),
-              ayarSatiri(
-                ikon: Icons.notifications_none_rounded,
-                ad: 'Hatırlatma',
-                deger: profil.bildirim ? saat : 'Kapalı',
-                onTap: hesabiAc,
-              ),
-            ],
+          duzSatir(
+            ikon: Icons.notifications_none_rounded,
+            ad: 'Bildirimler',
+            deger: profil.bildirim ? saat : 'Kapalı',
+            onTap: hesabiAc,
           ),
-        ),
-
-        bolumBasligi('SEVİYELER'),
-        for (final d in duzeyBilgisi.entries) paketKarti(d.key, d.value),
-        kutu(
-          child: ExpansionTile(
-            tilePadding: EdgeInsets.zero,
-            shape: const Border(),
-            collapsedShape: const Border(),
-            leading: const Icon(Icons.add_circle_outline, color: kTuruncu),
-            title: const Text(
-              'Kendi kelimeni ekle',
-              style: TextStyle(fontWeight: FontWeight.bold, color: kSoluk),
+        ]),
+        const SizedBox(height: 18),
+        satirGrubu([
+          duzSatir(
+            ikon: Icons.chat_bubble_outline_rounded,
+            ad: 'Öneri ve sorun bildir',
+            onTap: () => Navigator.push(
+              context,
+              MaterialPageRoute(builder: (_) => GeriBildirimSayfasi(ad: profil.ad)),
             ),
-            children: [
-              TextField(
-                controller: ingKutusu,
-                decoration: const InputDecoration(
-                  labelText: 'İngilizce kelime',
-                  border: OutlineInputBorder(),
-                ),
-              ),
-              const SizedBox(height: 12),
-              TextField(
-                controller: trKutusu,
-                decoration: const InputDecoration(
-                  labelText: 'Türkçe anlamı',
-                  border: OutlineInputBorder(),
-                ),
-                onSubmitted: (_) => kelimeEkle(),
-              ),
-              const SizedBox(height: 12),
-              SizedBox(
-                width: double.infinity,
-                child: FilledButton(
-                  onPressed: kelimeEkle,
-                  child: const Text('Kaydet'),
-                ),
-              ),
-              const SizedBox(height: 8),
-            ],
           ),
-        ),
-
-        bolumBasligi('DİĞER'),
-        kutu(
-          child: ayarSatiri(
+          duzSatir(
+            ikon: Icons.info_outline_rounded,
+            ad: 'Uygulama hakkında',
+            onTap: () => showAboutDialog(
+              context: context,
+              applicationName: 'ApriEnglish',
+              applicationVersion: '1.0',
+              applicationLegalese: "Malatya'dan sevgilerle",
+            ),
+          ),
+        ]),
+        const SizedBox(height: 18),
+        satirGrubu([
+          duzSatir(
             ikon: Icons.restart_alt_rounded,
             ad: 'İlerlemeyi sıfırla',
-            renk: const Color(0xFFE8674A),
+            renk: const Color(0xFF7E766E), // soluk: kolay basılmasın diye göze batmaz
+            okGoster: false,
             onTap: sifirlaSor,
           ),
-        ),
-        const SizedBox(height: 18),
-        const Center(
-          child: Text(
-            "ApriEnglish 1.0 · Malatya'dan sevgilerle",
-            style: TextStyle(fontSize: 12, color: Color(0xFF5C554F)),
-          ),
-        ),
+        ]),
       ],
     );
+  }
+
+  // Açık seviyeler kısa yazılır: "A1 · A2 · ★"
+  String seviyeOzeti() {
+    final sira = ['A1', 'A2', 'B1', 'Benim'];
+    return sira
+        .where(seciliDuzeyler.contains)
+        .map((d) => d == 'Benim' ? '★' : d)
+        .join(' · ');
+  }
+
+  // Satırları kenardan kenara bir blokta toplar, aralarına ince çizgi koyar
+  Widget satirGrubu(List<Widget> satirlar) {
+    return Container(
+      color: kKart,
+      child: Column(
+        children: [
+          for (int i = 0; i < satirlar.length; i++) ...[
+            if (i > 0) const Divider(height: 1, thickness: 1, indent: 64, color: kCizgi),
+            satirlar[i],
+          ],
+        ],
+      ),
+    );
+  }
+
+  // Düz liste satırı: ikon, ad, sağda değer ve ok
+  Widget duzSatir({
+    required IconData ikon,
+    required String ad,
+    String? deger,
+    Color renk = kYazi,
+    bool okGoster = true,
+    required VoidCallback onTap,
+  }) {
+    return ListTile(
+      onTap: onTap,
+      minTileHeight: 64,
+      contentPadding: const EdgeInsets.only(left: 20, right: 12),
+      leading: Icon(ikon, color: renk == kYazi ? kSoluk : renk, size: 26),
+      title: Text(
+        ad,
+        style: TextStyle(fontSize: 17, fontWeight: FontWeight.w600, color: renk),
+      ),
+      trailing: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (deger != null)
+            Text(
+              deger,
+              style: const TextStyle(fontWeight: FontWeight.w700, color: kTuruncu),
+            ),
+          if (okGoster) ...[
+            const SizedBox(width: 4),
+            const Icon(Icons.chevron_right_rounded, color: Color(0xFF7E766E)),
+          ],
+        ],
+      ),
+    );
+  }
+
+  // YENİ: Seviyeler ayrı sayfada. Sayfa ana durumun (State) dışında olduğu için
+  // StatefulBuilder kullanıyoruz: "yenile" çağrılınca sadece bu sayfa yeniden çizilir.
+  void seviyeleriAc() {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => StatefulBuilder(
+          builder: (context, yenile) => Scaffold(
+            appBar: AppBar(title: const Text('Seviyeler')),
+            body: ListView(
+              padding: const EdgeInsets.only(top: 4, bottom: 28),
+              children: [
+                const Padding(
+                  padding: EdgeInsets.fromLTRB(20, 0, 20, 8),
+                  child: Text(
+                    'Pratik ve testler açık seviyelerden sorulur. '
+                    'Ana sayfadaki dersler için sol üstteki rozete dokun.',
+                    style: TextStyle(color: kSoluk, fontSize: 14),
+                  ),
+                ),
+                for (final d in duzeyBilgisi.entries)
+                  paketKarti(d.key, d.value, () => yenile(() {})),
+                kutu(
+                  child: ExpansionTile(
+                    tilePadding: EdgeInsets.zero,
+                    shape: const Border(),
+                    collapsedShape: const Border(),
+                    leading: const Icon(Icons.add_circle_outline, color: kTuruncu),
+                    title: const Text(
+                      'Kendi kelimeni ekle',
+                      style: TextStyle(fontWeight: FontWeight.bold, color: kSoluk),
+                    ),
+                    children: [
+                      TextField(
+                        controller: ingKutusu,
+                        decoration: const InputDecoration(
+                          labelText: 'İngilizce kelime',
+                          border: OutlineInputBorder(),
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      TextField(
+                        controller: trKutusu,
+                        decoration: const InputDecoration(
+                          labelText: 'Türkçe anlamı',
+                          border: OutlineInputBorder(),
+                        ),
+                        onSubmitted: (_) {
+                          kelimeEkle();
+                          yenile(() {}); // Benim kelimelerim sayısı güncellensin
+                        },
+                      ),
+                      const SizedBox(height: 12),
+                      SizedBox(
+                        width: double.infinity,
+                        child: FilledButton(
+                          onPressed: () {
+                            kelimeEkle();
+                            yenile(() {});
+                          },
+                          child: const Text('Kaydet'),
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    ).then((_) {
+      if (mounted) setState(() {}); // dönünce Profil'deki özet güncellensin
+    });
   }
 
   // Gri, küçük, aralıklı harfli bölüm başlığı
@@ -2195,37 +2468,6 @@ class _AnaSayfaState extends State<AnaSayfa> {
           ),
         ),
       );
-
-  // Ayar listesindeki bir satır: ikon, ad, sağda değer ve ok
-  Widget ayarSatiri({
-    required IconData ikon,
-    required String ad,
-    String? deger,
-    Color renk = kYazi,
-    required VoidCallback onTap,
-  }) {
-    return ListTile(
-      contentPadding: EdgeInsets.zero,
-      onTap: onTap,
-      leading: Icon(ikon, color: renk == kYazi ? kSoluk : renk),
-      title: Text(
-        ad,
-        style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700, color: renk),
-      ),
-      trailing: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          if (deger != null)
-            Text(
-              deger,
-              style: const TextStyle(fontWeight: FontWeight.w700, color: kTuruncu),
-            ),
-          const SizedBox(width: 4),
-          const Icon(Icons.chevron_right_rounded, color: Color(0xFF7E766E)),
-        ],
-      ),
-    );
-  }
 
   // YENİ: Her şeyi sıfırlamadan önce mutlaka sorar
   Future<void> sifirlaSor() async {
@@ -2305,34 +2547,64 @@ class _AnaSayfaState extends State<AnaSayfa> {
     );
   }
 
-  // 🔥 Seri ve bugün
+  // YENİ: Üstte üç kutu: seri, en uzun seri, bugün
   Widget seriKutusu() {
-    final seri = seriHesapla();
-    return kutu(
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 6, 16, 6),
       child: Row(
         children: [
-          const Text('🔥', style: TextStyle(fontSize: 36)),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  '$seri gün seri',
-                  style: const TextStyle(
-                    fontSize: 22,
-                    fontWeight: FontWeight.bold,
-                    color: kParlakTuruncu,
+          ozetKutusu('SERİ', '${seriHesapla()} gün', kTuruncu),
+          const SizedBox(width: 10),
+          ozetKutusu('EN UZUN', '${enUzunSeri()} gün', const Color(0xFF7C9CFF)),
+          const SizedBox(width: 10),
+          ozetKutusu('BUGÜN', '$bugun kelime', const Color(0xFF4CC37A)),
+        ],
+      ),
+    );
+  }
+
+  // Renkli başlıklı küçük kutu (ders sonu ekranındakiyle aynı tarz)
+  Widget ozetKutusu(String baslik, String deger, Color renk) {
+    return Expanded(
+      child: Container(
+        clipBehavior: Clip.antiAlias,
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(18),
+          border: Border.all(color: renk, width: 2),
+        ),
+        child: Column(
+          children: [
+            Container(
+              width: double.infinity,
+              color: renk,
+              padding: const EdgeInsets.symmetric(vertical: 5),
+              child: Text(
+                baslik,
+                textAlign: TextAlign.center,
+                style: const TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w900,
+                  letterSpacing: 1,
+                  color: kZemin,
+                ),
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 4),
+              child: FittedBox(
+                fit: BoxFit.scaleDown,
+                child: Text(
+                  deger,
+                  style: TextStyle(
+                    fontSize: 19,
+                    fontWeight: FontWeight.w900,
+                    color: renk,
                   ),
                 ),
-                Text(
-                  'Bugün $bugun kelime bildin',
-                  style: const TextStyle(color: kSoluk),
-                ),
-              ],
+              ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
@@ -2345,7 +2617,7 @@ class _AnaSayfaState extends State<AnaSayfa> {
     return kCizgi;
   }
 
-  // 📅 Son 12 hafta: her sütun bir hafta, her satır bir gün (Pzt..Paz)
+  // Son 12 hafta: her sütun bir hafta, her satır bir gün (Pzt..Paz)
   Widget takvim() {
     final bugunTarih = DateTime.now();
     final buPazartesi = bugunTarih.subtract(Duration(days: bugunTarih.weekday - 1));
@@ -2356,29 +2628,50 @@ class _AnaSayfaState extends State<AnaSayfa> {
         children: [
           const Text(
             'Son 12 hafta',
-            style: TextStyle(fontWeight: FontWeight.bold, color: kSoluk),
+            style: TextStyle(fontWeight: FontWeight.w800, color: kSoluk),
           ),
           const SizedBox(height: 12),
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: List.generate(12, (hafta) {
-              return Column(
-                children: List.generate(7, (gun) {
-                  final tarih = baslangic.add(Duration(days: hafta * 7 + gun));
-                  final gelecek = tarih.isAfter(bugunTarih);
-                  final sayi = gecmis[tarihMetni(tarih)] ?? 0;
-                  return Container(
-                    width: 18,
-                    height: 18,
-                    margin: const EdgeInsets.all(2),
-                    decoration: BoxDecoration(
-                      color: gelecek ? Colors.transparent : takvimRengi(sayi),
-                      borderRadius: BorderRadius.circular(4),
+            children: [
+              // YENİ: Solda gün harfleri, her biri bir karenin hizasında
+              Column(
+                children: [
+                  for (final h in ['P', 'S', 'Ç', 'P', 'C', 'C', 'P'])
+                    SizedBox(
+                      height: 22,
+                      child: Center(
+                        child: Text(
+                          h,
+                          style: const TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.w700,
+                            color: Color(0xFF7E766E),
+                          ),
+                        ),
+                      ),
                     ),
-                  );
-                }),
-              );
-            }),
+                ],
+              ),
+              ...List.generate(12, (hafta) {
+                return Column(
+                  children: List.generate(7, (gun) {
+                    final tarih = baslangic.add(Duration(days: hafta * 7 + gun));
+                    final gelecek = tarih.isAfter(bugunTarih);
+                    final sayi = gecmis[tarihMetni(tarih)] ?? 0;
+                    return Container(
+                      width: 18,
+                      height: 18,
+                      margin: const EdgeInsets.all(2),
+                      decoration: BoxDecoration(
+                        color: gelecek ? Colors.transparent : takvimRengi(sayi),
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                    );
+                  }),
+                );
+              }),
+            ],
           ),
           const SizedBox(height: 10),
           Row(
@@ -2403,62 +2696,98 @@ class _AnaSayfaState extends State<AnaSayfa> {
     );
   }
 
-  // ☀️ Kurutma özeti: dört aşamanın sayıları
+  // YENİ: Olgunlaşma özeti: dört aşama tek bir renkli çubukta
   Widget kurutmaKutusu() {
     int say(int grup) =>
         kelimeler.where((k) => durumGrubu(k.seviye) == grup).length;
     final zamaniGelen =
-        kelimeler.where((k) => k.seviye >= 3 && zamaniGeldi(k)).length;
-
-    Widget asama(int seviye, int sayi, String ad) {
-      return Expanded(
-        child: Column(
-          children: [
-            kucukKayisi(seviye, 30),
-            const SizedBox(height: 6),
-            Text(
-              '$sayi',
-              style: const TextStyle(
-                fontSize: 20,
-                fontWeight: FontWeight.bold,
-                color: kParlakTuruncu,
-              ),
-            ),
-            Text(ad, style: const TextStyle(fontSize: 12, color: kSoluk)),
-          ],
-        ),
-      );
-    }
+        kelimeler.where((k) => k.seviye >= 3 && k.tekrar != null && zamaniGeldi(k)).length;
+    // (aşama, sayı, ad) üçlüleri: record kullanıyoruz
+    final asamalar = [
+      (0, say(0), 'ham'),
+      (1, say(1), 'yarı olgun'),
+      (3, say(3), 'kurutmada'),
+      (4, say(4), 'kuru'),
+    ];
 
     return kutu(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text(
-            '☀️ Kurutma',
-            style: TextStyle(fontWeight: FontWeight.bold, color: kSoluk),
+          const Row(
+            children: [
+              Icon(Icons.wb_sunny_outlined, color: kTuruncu, size: 20),
+              SizedBox(width: 8),
+              Text(
+                'Olgunlaşma',
+                style: TextStyle(fontWeight: FontWeight.w800, color: kSoluk),
+              ),
+            ],
           ),
-          const SizedBox(height: 12),
+          const SizedBox(height: 14),
+          // Çubuk: her renk, o aşamadaki kelime sayısı kadar yer kaplar (flex)
+          ClipRRect(
+            borderRadius: BorderRadius.circular(7),
+            child: SizedBox(
+              height: 14,
+              child: Row(
+                children: [
+                  for (final (seviye, sayi, _) in asamalar)
+                    if (sayi > 0)
+                      Expanded(
+                        flex: sayi,
+                        child: Container(color: durumRenkleri(seviye)[1]),
+                      ),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 14),
           Row(
             children: [
-              asama(0, say(0), 'ham'),
-              asama(1, say(1), 'yarı'),
-              asama(3, say(3), 'kurutmada'),
-              asama(4, say(4), 'kuru'),
+              for (final (seviye, sayi, ad) in asamalar)
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Container(
+                            width: 10,
+                            height: 10,
+                            decoration: BoxDecoration(
+                              shape: BoxShape.circle,
+                              color: durumRenkleri(seviye)[1],
+                            ),
+                          ),
+                          const SizedBox(width: 6),
+                          Text(
+                            '$sayi',
+                            style: const TextStyle(
+                              fontSize: 18,
+                              fontWeight: FontWeight.w900,
+                            ),
+                          ),
+                        ],
+                      ),
+                      Text(ad, style: const TextStyle(fontSize: 12, color: kSoluk)),
+                    ],
+                  ),
+                ),
             ],
           ),
           const SizedBox(height: 12),
           const Text(
             '3 kez bildiğin kelime kurutmaya alınır. 3 gün sonra yine bilirsen '
             'kuru kayısı olur: artık kalıcı!',
-            style: TextStyle(fontSize: 13, color: kSoluk),
+            style: TextStyle(fontSize: 13, color: Color(0xFF7E766E)),
           ),
           if (zamaniGelen > 0) ...[
             const SizedBox(height: 8),
             Text(
               'Bugün tekrar zamanı gelen: $zamaniGelen kelime',
               style: const TextStyle(
-                fontWeight: FontWeight.bold,
+                fontWeight: FontWeight.w800,
                 color: kParlakTuruncu,
               ),
             ),
@@ -2535,7 +2864,13 @@ class _AnaSayfaState extends State<AnaSayfa> {
             ],
           ),
         ),
-        const SizedBox(height: 4),
+        const Padding(
+          padding: EdgeInsets.fromLTRB(20, 8, 20, 2),
+          child: Text(
+            'Silmek için kelimeyi sola kaydır',
+            style: TextStyle(fontSize: 12, color: Color(0xFF7E766E)),
+          ),
+        ),
         if (gorunen.isEmpty)
           const Padding(
             padding: EdgeInsets.all(24),
@@ -2546,25 +2881,33 @@ class _AnaSayfaState extends State<AnaSayfa> {
             ),
           ),
         for (final k in gorunen)
-          ListTile(
-            leading: kucukKayisi(k.seviye, 26),
-            title: Text(
-              k.ing,
-              style: const TextStyle(fontWeight: FontWeight.bold),
+          // YENİ: Dismissible = kaydırınca kaybolan satır
+          Dismissible(
+            key: ValueKey(k), // her satırı kendi kelimesiyle tanır
+            direction: DismissDirection.endToStart, // sadece sola
+            confirmDismiss: (_) async => kelimeler.length > 1, // son kelime silinmez
+            onDismissed: (_) => kelimeSil(k),
+            background: Container(
+              color: const Color(0xFFC94A3A),
+              alignment: Alignment.centerRight,
+              padding: const EdgeInsets.only(right: 24),
+              child: const Icon(Icons.delete_outline_rounded, color: Colors.white),
             ),
-            subtitle: Text(kelimeAciklamasi(k)),
-            trailing: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                IconButton(
-                  icon: const Icon(Icons.volume_up, color: kTuruncu),
-                  onPressed: () => oku(k.ing),
-                ),
-                IconButton(
-                  icon: const Icon(Icons.delete_outline),
-                  onPressed: () => kelimeSil(k),
-                ),
-              ],
+            child: ListTile(
+              leading: kucukKayisi(k.seviye, 26),
+              title: Text(
+                k.ing,
+                style: const TextStyle(fontWeight: FontWeight.w800),
+              ),
+              subtitle: Text(
+                kelimeAciklamasi(k),
+                style: const TextStyle(color: kSoluk),
+              ),
+              trailing: IconButton(
+                tooltip: 'Dinle',
+                icon: const Icon(Icons.volume_up_rounded, color: kTuruncu),
+                onPressed: () => oku(k.ing),
+              ),
             ),
           ),
       ],
@@ -2582,64 +2925,82 @@ class _AnaSayfaState extends State<AnaSayfa> {
     if (!tanitimTamam) {
       return TanitimSayfasi(profil: profil.kopya(), onBitti: tanitimBitti);
     }
-    // Sekmeler: 0 ana sayfa, 1 kartlar, 2 test, 3 hasat, 4 profil
+    // Sekmeler: 0 ana sayfa, 1 pratik, 2 hasat, 3 profil
     final ekranlar = [
       anaSayfaEkrani(),
-      kartEkrani(),
       testEkrani(),
       hasatEkrani(),
       profilEkrani(),
     ];
-    const basliklar = ['', 'Kartlar', 'Test', 'Hasat', 'Profil'];
-    return Scaffold(
+    // Pratik'te kartlar açıksa başlıkta "Kartlar" yazsın ve geri oku çıksın
+    final kartlarAcik = sekme == 1 && testDurumu == 'kartlar';
+    // Soru çözerken başlık ve alt menü gizlenir, ekranın tamamı soruya kalır
+    final odak = sekme == 1 && testDurumu == 'soru';
+    final baslik = kartlarAcik ? 'Kartlar' : ['', 'Pratik', 'Hasat', 'Profil'][sekme];
+    final sayfa = Scaffold(
       // Ana sayfanın kendi üst şeridi var; başlık çubuğu sadece diğer sekmelerde
-      appBar: sekme == 0
+      appBar: sekme == 0 || odak
           ? null
-          : AppBar(title: Text(basliklar[sekme])),
+          : AppBar(
+              title: Text(baslik),
+              leading: kartlarAcik
+                  ? IconButton(
+                      tooltip: 'Pratik listesine dön',
+                      onPressed: () => setState(() => testDurumu = 'secim'),
+                      icon: const Icon(Icons.arrow_back_rounded),
+                    )
+                  : null,
+            ),
       body: ekranlar[sekme],
       // YENİ: Sadece ikonlu alt menü (yazılar gizli, basılı tutunca görünür)
-      bottomNavigationBar: NavigationBar(
-        selectedIndex: sekme,
-        labelBehavior: NavigationDestinationLabelBehavior.alwaysHide,
-        height: 68,
-        onDestinationSelected: (i) {
-          setState(() {
-            sekme = i;
-          });
-        },
-        destinations: const [
-          NavigationDestination(
-            icon: Icon(Icons.home_outlined, color: kSoluk),
-            selectedIcon: Icon(Icons.home_rounded, color: kTuruncu),
-            label: 'Ana sayfa',
-            tooltip: 'Ana sayfa',
+      bottomNavigationBar: odak
+          ? null
+          : NavigationBar(
+            selectedIndex: sekme,
+            labelBehavior: NavigationDestinationLabelBehavior.alwaysHide,
+            height: 68,
+            onDestinationSelected: (i) {
+              setState(() {
+                // Kartlardayken Pratik ikonuna tekrar basınca listeye dön
+                if (i == 1 && sekme == 1) testDurumu = 'secim';
+                sekme = i;
+              });
+            },
+            destinations: const [
+              NavigationDestination(
+                icon: Icon(Icons.home_outlined, color: kSoluk),
+                selectedIcon: Icon(Icons.home_rounded, color: kTuruncu),
+                label: 'Ana sayfa',
+                tooltip: 'Ana sayfa',
+              ),
+              NavigationDestination(
+                icon: Icon(Icons.bolt_outlined, color: kSoluk),
+                selectedIcon: Icon(Icons.bolt_rounded, color: kTuruncu),
+                label: 'Pratik',
+                tooltip: 'Pratik',
+              ),
+              NavigationDestination(
+                icon: Icon(Icons.wb_sunny_outlined, color: kSoluk),
+                selectedIcon: Icon(Icons.wb_sunny, color: kTuruncu),
+                label: 'Hasat',
+                tooltip: 'Hasat',
+              ),
+              NavigationDestination(
+                icon: Icon(Icons.person_outline_rounded, color: kSoluk),
+                selectedIcon: Icon(Icons.person_rounded, color: kTuruncu),
+                label: 'Profil',
+                tooltip: 'Profil',
+              ),
+            ],
           ),
-          NavigationDestination(
-            icon: Icon(Icons.style_outlined, color: kSoluk),
-            selectedIcon: Icon(Icons.style, color: kTuruncu),
-            label: 'Kartlar',
-            tooltip: 'Kartlar',
-          ),
-          NavigationDestination(
-            icon: Icon(Icons.edit_outlined, color: kSoluk),
-            selectedIcon: Icon(Icons.edit, color: kTuruncu),
-            label: 'Test',
-            tooltip: 'Test',
-          ),
-          NavigationDestination(
-            icon: Icon(Icons.wb_sunny_outlined, color: kSoluk),
-            selectedIcon: Icon(Icons.wb_sunny, color: kTuruncu),
-            label: 'Hasat',
-            tooltip: 'Hasat',
-          ),
-          NavigationDestination(
-            icon: Icon(Icons.person_outline_rounded, color: kSoluk),
-            selectedIcon: Icon(Icons.person_rounded, color: kTuruncu),
-            label: 'Profil',
-            tooltip: 'Profil',
-          ),
-        ],
-      ),
+    );
+    // Telefonun geri tuşu: kartlar ya da soru açıksa uygulamadan çıkma, listeye dön
+    return PopScope(
+      canPop: !kartlarAcik && !odak,
+      onPopInvokedWithResult: (cikildi, _) {
+        if (!cikildi) setState(() => testDurumu = 'secim');
+      },
+      child: sayfa,
     );
   }
 }
@@ -4181,7 +4542,7 @@ class _DersSayfasiState extends State<DersSayfasi> {
               ),
               const SizedBox(height: 4),
               Text(
-                '${d.duzey} · Ders ${d.no} · ${d.baslik}',
+                d.no == 0 ? d.baslik : '${d.duzey} · Ders ${d.no} · ${d.baslik}',
                 textAlign: TextAlign.center,
                 style: const TextStyle(
                   fontSize: 16,
@@ -4317,6 +4678,168 @@ class _DersSayfasiState extends State<DersSayfasi> {
               ),
             ),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+
+// ======================= Geri bildirim =======================
+
+// YENİ: Kullanıcı uygulamanın içinden yazar; mesaj arka planda Google Formuna gider,
+// cevaplar Google E-Tablosu'nda toplanır. Sunucu gerekmez.
+class GeriBildirimSayfasi extends StatefulWidget {
+  final String ad; // profildeki ad, formun "İsim" sorusuna yazılır
+
+  const GeriBildirimSayfasi({super.key, required this.ad});
+
+  @override
+  State<GeriBildirimSayfasi> createState() => _GeriBildirimSayfasiState();
+}
+
+class _GeriBildirimSayfasiState extends State<GeriBildirimSayfasi> {
+  // Formun adresi: linkteki "viewform" yerine "formResponse" = cevap gönderme kapısı
+  static const formAdresi =
+      'https://docs.google.com/forms/d/e/1FAIpQLScnV-00z6rlYMY45U1GNJtybDt4HsLb0_EnFuxiQ7pIP3ArSA/formResponse';
+  // Her sorunun gizli kimliği (önceden doldurulmuş linkten aldık)
+  static const konuKimligi = 'entry.185359346';
+  static const mesajKimligi = 'entry.379842936';
+  static const isimKimligi = 'entry.1645225265';
+
+  final TextEditingController mesajKutusu = TextEditingController();
+  String konu = 'Öneri'; // formdaki seçeneklerle birebir aynı yazılmalı
+  bool gonderiliyor = false; // gönderirken buton dönen çembere dönüşür
+
+  @override
+  void dispose() {
+    mesajKutusu.dispose();
+    super.dispose();
+  }
+
+  Future<void> gonder() async {
+    final mesaj = mesajKutusu.text.trim();
+    if (mesaj.length < 5) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Biraz daha yazar mısın? En az 5 harf.')),
+      );
+      return;
+    }
+    setState(() => gonderiliyor = true);
+    bool basarili = false;
+    try {
+      // POST: formu doldurup "Gönder"e basmanın kod hâli
+      final cevap = await http.post(
+        Uri.parse(formAdresi),
+        body: {
+          konuKimligi: konu,
+          mesajKimligi: mesaj,
+          isimKimligi: widget.ad,
+        },
+      ).timeout(const Duration(seconds: 15)); // 15 sn'de cevap yoksa vazgeç
+      basarili = cevap.statusCode == 200; // 200 = "tamam, aldım"
+    } catch (_) {
+      basarili = false; // internet yok ya da zaman aşımı
+    }
+    if (!mounted) return; // beklerken sayfa kapandıysa dokunma
+    setState(() => gonderiliyor = false);
+    if (basarili) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Teşekkürler! Mesajın bize ulaştı.')),
+      );
+      Navigator.pop(context);
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Gönderilemedi. İnternet bağlantını kontrol edip tekrar dene.')),
+      );
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text('Öneri ve sorun bildir')),
+      body: SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(20, 8, 20, 20),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              const Text(
+                'ApriEnglish\'i birlikte geliştirelim. Aklına gelen her şeyi yaz, '
+                'hepsini tek tek okuyoruz.',
+                style: TextStyle(fontSize: 15, color: kSoluk, height: 1.4),
+              ),
+              const SizedBox(height: 20),
+              const Text(
+                'KONU',
+                style: TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w800,
+                  letterSpacing: 1.4,
+                  color: Color(0xFF7E766E),
+                ),
+              ),
+              const SizedBox(height: 8),
+              Wrap(
+                spacing: 8,
+                children: [
+                  for (final k in ['Öneri', 'Sorun', 'Diğer'])
+                    ChoiceChip(
+                      label: Text(k),
+                      selected: konu == k,
+                      onSelected: (_) => setState(() => konu = k),
+                    ),
+                ],
+              ),
+              const SizedBox(height: 20),
+              Expanded(
+                child: TextField(
+                  controller: mesajKutusu,
+                  maxLines: null, // satır sınırı yok
+                  expands: true, // kutu kalan alanı doldursun
+                  maxLength: 1000,
+                  textAlignVertical: TextAlignVertical.top,
+                  textCapitalization: TextCapitalization.sentences,
+                  decoration: InputDecoration(
+                    hintText: konu == 'Sorun'
+                        ? 'Ne oldu? Hangi ekranda, ne yaparken?'
+                        : 'Mesajını yaz...',
+                    filled: true,
+                    fillColor: kKart,
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(18),
+                      borderSide: BorderSide.none,
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 12),
+              SizedBox(
+                height: 58,
+                child: FilledButton(
+                  onPressed: gonderiliyor ? null : gonder, // gönderirken çift basılmasın
+                  style: FilledButton.styleFrom(
+                    backgroundColor: kTuruncu,
+                    foregroundColor: const Color(0xFF1A0E05),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+                    textStyle: const TextStyle(
+                      fontFamily: 'Nunito',
+                      fontSize: 17,
+                      fontWeight: FontWeight.w900,
+                    ),
+                  ),
+                  child: gonderiliyor
+                      ? const SizedBox(
+                          width: 24,
+                          height: 24,
+                          child: CircularProgressIndicator(strokeWidth: 3, color: kTuruncu),
+                        )
+                      : const Text('Gönder'),
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );
