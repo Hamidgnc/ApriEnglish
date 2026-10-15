@@ -396,6 +396,7 @@ class _AnaSayfaState extends State<AnaSayfa> {
 
   List<Kelime> kelimeler = []; // ilk açılışta hazır paketle dolar
   Set<String> seciliDuzeyler = {'A1', 'Benim'}; // YENİ: çalışılan seviyeler
+  String aktifDuzey = 'A1'; // YENİ: ana sayfada derslerini gördüğün seviye
   final Random rastgele = Random();
   final FlutterTts ses = FlutterTts();
   bool yuklendi = false;
@@ -503,6 +504,9 @@ class _AnaSayfaState extends State<AnaSayfa> {
       dersPuanlari = m.map((ders, puan) => MapEntry(ders, puan as int));
     }
     dersleriOlustur();
+    // Kayıtlı aktif seviye yoksa açık seviyelerden ilkini al
+    aktifDuzey = await prefs.getString('aktifDuzey') ??
+        ['A1', 'A2', 'B1'].firstWhere(seciliDuzeyler.contains, orElse: () => 'A1');
     kaydiriciyiKur();
     setState(() {
       bugun = gecmis[bugununTarihi()] ?? 0;
@@ -534,6 +538,7 @@ class _AnaSayfaState extends State<AnaSayfa> {
     await prefs.setString('gecmis', jsonEncode(gecmis));
     await prefs.setString('duzeyler', jsonEncode(seciliDuzeyler.toList()));
     await prefs.setString('dersPuanlari', jsonEncode(dersPuanlari));
+    await prefs.setString('aktifDuzey', aktifDuzey);
   }
 
   // ---------------- Dersler ----------------
@@ -562,10 +567,71 @@ class _AnaSayfaState extends State<AnaSayfa> {
     }
   }
 
-  // Ana sayfada sadece açık seviyelerin dersleri görünür
-  List<Ders> get gorunenDersler {
-    final liste = dersler.where((d) => seciliDuzeyler.contains(d.duzey)).toList();
-    return liste.isEmpty ? dersler.where((d) => d.duzey == 'A1').toList() : liste;
+  // Ana sayfada sadece aktif seviyenin dersleri görünür
+  List<Ders> get gorunenDersler =>
+      dersler.where((d) => d.duzey == aktifDuzey).toList();
+
+  // Bir seviyede kaç ders var, kaçı bitti (en az 1 kayısı)
+  int dersSayisi(String duzey) => dersler.where((d) => d.duzey == duzey).length;
+  int bitenDers(String duzey) => dersler
+      .where((d) => d.duzey == duzey && (dersPuanlari[d.kimlik] ?? 0) > 0)
+      .length;
+
+  // YENİ: Rozete dokununca alttan açılan seviye seçici
+  Future<void> duzeySec() async {
+    final secilen = await showModalBottomSheet<String>(
+      context: context,
+      backgroundColor: kKart,
+      showDragHandle: true,
+      builder: (context) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Padding(
+              padding: EdgeInsets.only(bottom: 8),
+              child: Text(
+                'Hangi seviyeden ders yapalım?',
+                style: TextStyle(fontSize: 18, fontWeight: FontWeight.w900),
+              ),
+            ),
+            for (final d in ['A1', 'A2', 'B1'])
+              ListTile(
+                onTap: () => Navigator.pop(context, d), // seçilen seviyeyi geri yolla
+                leading: CircleAvatar(
+                  backgroundColor: d == aktifDuzey ? kTuruncu : kCizgi,
+                  child: Text(
+                    d,
+                    style: TextStyle(
+                      fontWeight: FontWeight.w900,
+                      color: d == aktifDuzey ? kZemin : kYazi,
+                    ),
+                  ),
+                ),
+                title: Text(
+                  duzeyBilgisi[d] ?? d,
+                  style: const TextStyle(fontWeight: FontWeight.w800),
+                ),
+                subtitle: Text(
+                  '${bitenDers(d)} / ${dersSayisi(d)} ders bitti',
+                  style: const TextStyle(color: kSoluk),
+                ),
+                trailing: d == aktifDuzey
+                    ? const Icon(Icons.check_rounded, color: kTuruncu)
+                    : null,
+              ),
+            const SizedBox(height: 12),
+          ],
+        ),
+      ),
+    );
+    if (secilen == null || secilen == aktifDuzey) return; // kapatıldı ya da aynısı
+    setState(() {
+      aktifDuzey = secilen;
+      seciliDuzeyler.add(secilen); // ders yaptığın seviye pratikte de açık olsun
+      aktif = kelimeSec();
+      kaydiriciyiKur();
+    });
+    kelimeleriKaydet();
   }
 
   // Henüz bitirilmemiş ilk dersin sırası (hepsi bittiyse sonuncusu)
@@ -578,7 +644,12 @@ class _AnaSayfaState extends State<AnaSayfa> {
   // Ders kartlarının kaydırıcısını sıradaki derste açılacak şekilde (yeniden) kurar.
   // Seviyeler değişince de çağırırız, çünkü görünen ders listesi değişir.
   void kaydiriciyiKur() {
-    dersKaydirici?.dispose();
+    // Eskisini hemen değil, ekran yenilendikten sonra çöpe at:
+    // o an hâlâ ekrandaki PageView'a bağlı olabilir.
+    final eski = dersKaydirici;
+    if (eski != null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => eski.dispose());
+    }
     dersKaydirici = PageController(
       viewportFraction: 0.86, // yandaki kartın kenarı görünsün
       initialPage: siradakiDers(),
@@ -724,6 +795,7 @@ class _AnaSayfaState extends State<AnaSayfa> {
       profil = yeni;
       seciliDuzeyler = duzeyler;
       tanitimTamam = true;
+      aktifDuzey = ['A1', 'A2', 'B1'].firstWhere(duzeyler.contains, orElse: () => 'A1');
       kaydiriciyiKur();
       aktif = kelimeSec();
       onYuz = true;
@@ -931,8 +1003,16 @@ class _AnaSayfaState extends State<AnaSayfa> {
     setState(() {
       if (acik) {
         seciliDuzeyler.add(duzey);
+        if (duzey != 'Benim') aktifDuzey = duzey; // yeni açılan seviyenin dersleri gelsin
       } else if (seciliDuzeyler.length > 1) {
         seciliDuzeyler.remove(duzey);
+        // Ana sayfadaki seviye kapandıysa açık kalanlardan birine geç
+        if (duzey == aktifDuzey) {
+          aktifDuzey = ['A1', 'A2', 'B1'].firstWhere(
+            seciliDuzeyler.contains,
+            orElse: () => 'A1',
+          );
+        }
       }
       aktif = kelimeSec();
       onYuz = true;
@@ -969,6 +1049,7 @@ class _AnaSayfaState extends State<AnaSayfa> {
           // Kalan bütün yükseklik ders kartlarının
           Expanded(
             child: PageView.builder(
+              key: ValueKey(aktifDuzey), // seviye değişince kaydırıcı sıfırdan kurulsun
               controller: dersKaydirici,
               itemCount: liste.length,
               itemBuilder: (context, i) => dersKarti(liste[i]),
@@ -982,26 +1063,30 @@ class _AnaSayfaState extends State<AnaSayfa> {
   // Üst şerit: seviye rozeti, günlük hedef çubuğu, profil düğmesi
   Widget ustSerit() {
     final hedef = max(1, profil.hedef);
-    final liste = gorunenDersler;
-    final duzey = liste.isEmpty ? 'A1' : liste[siradakiDers()].duzey;
     return Padding(
       padding: const EdgeInsets.fromLTRB(20, 12, 8, 0),
       child: Row(
         children: [
-          Container(
-            width: 48,
-            height: 48,
-            alignment: Alignment.center,
-            decoration: BoxDecoration(
-              color: kCizgi,
+          // Seviye rozeti: dokununca seviye seçici açılır
+          Material(
+            color: kCizgi,
+            borderRadius: BorderRadius.circular(14),
+            child: InkWell(
               borderRadius: BorderRadius.circular(14),
-            ),
-            child: Text(
-              duzey,
-              style: const TextStyle(
-                fontSize: 17,
-                fontWeight: FontWeight.w900,
-                color: kTuruncu,
+              onTap: duzeySec,
+              child: SizedBox(
+                width: 48,
+                height: 48,
+                child: Center(
+                  child: Text(
+                    aktifDuzey,
+                    style: const TextStyle(
+                      fontSize: 17,
+                      fontWeight: FontWeight.w900,
+                      color: kTuruncu,
+                    ),
+                  ),
+                ),
               ),
             ),
           ),
@@ -1984,18 +2069,58 @@ class _AnaSayfaState extends State<AnaSayfa> {
     );
   }
 
-  // YENİ: Paketler sekmesi (eski Ekle sekmesinin yerine)
-  Widget paketlerEkrani() {
+  // ===== YENİ: Profil sekmesi (Paketler sekmesi de buraya taşındı) =====
+
+  Widget profilEkrani() {
+    final ogrenilen = kelimeler.where((k) => k.seviye >= 3).length;
+    final saat =
+        '${profil.saat.toString().padLeft(2, '0')}:${profil.dakika.toString().padLeft(2, '0')}';
     return ListView(
-      padding: const EdgeInsets.only(top: 4, bottom: 24),
+      padding: const EdgeInsets.only(top: 4, bottom: 28),
       children: [
-        const Padding(
-          padding: EdgeInsets.fromLTRB(20, 4, 20, 8),
-          child: Text(
-            'Çalışmak istediğin seviyeleri aç',
-            style: TextStyle(color: kSoluk, fontSize: 15),
+        // Profil kartı: dokununca Hesabım sayfası açılır
+        kutu(
+          child: ListTile(
+            contentPadding: EdgeInsets.zero,
+            onTap: hesabiAc,
+            leading: CircleAvatar(
+              radius: 30,
+              backgroundColor: kVurguZemin,
+              child: Text(profil.avatar, style: const TextStyle(fontSize: 30)),
+            ),
+            title: Text(
+              profil.ad.isEmpty ? 'Adını ekle' : profil.ad,
+              style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w900),
+            ),
+            subtitle: Text(
+              '$ogrenilen kelime öğrendi · ${seriHesapla()} gün seri',
+              style: const TextStyle(color: kSoluk, fontWeight: FontWeight.w600),
+            ),
+            trailing: const Icon(Icons.chevron_right_rounded, color: Color(0xFF7E766E)),
           ),
         ),
+
+        bolumBasligi('ÇALIŞMA'),
+        kutu(
+          child: Column(
+            children: [
+              ayarSatiri(
+                ikon: Icons.flag_outlined,
+                ad: 'Günlük hedef',
+                deger: '${profil.hedef} kelime',
+                onTap: hesabiAc,
+              ),
+              ayarSatiri(
+                ikon: Icons.notifications_none_rounded,
+                ad: 'Hatırlatma',
+                deger: profil.bildirim ? saat : 'Kapalı',
+                onTap: hesabiAc,
+              ),
+            ],
+          ),
+        ),
+
+        bolumBasligi('SEVİYELER'),
         for (final d in duzeyBilgisi.entries) paketKarti(d.key, d.value),
         kutu(
           child: ExpansionTile(
@@ -2036,7 +2161,117 @@ class _AnaSayfaState extends State<AnaSayfa> {
             ],
           ),
         ),
+
+        bolumBasligi('DİĞER'),
+        kutu(
+          child: ayarSatiri(
+            ikon: Icons.restart_alt_rounded,
+            ad: 'İlerlemeyi sıfırla',
+            renk: const Color(0xFFE8674A),
+            onTap: sifirlaSor,
+          ),
+        ),
+        const SizedBox(height: 18),
+        const Center(
+          child: Text(
+            "ApriEnglish 1.0 · Malatya'dan sevgilerle",
+            style: TextStyle(fontSize: 12, color: Color(0xFF5C554F)),
+          ),
+        ),
       ],
+    );
+  }
+
+  // Gri, küçük, aralıklı harfli bölüm başlığı
+  Widget bolumBasligi(String metin) => Padding(
+        padding: const EdgeInsets.fromLTRB(24, 18, 24, 6),
+        child: Text(
+          metin,
+          style: const TextStyle(
+            fontSize: 13,
+            fontWeight: FontWeight.w800,
+            letterSpacing: 1.4,
+            color: Color(0xFF7E766E),
+          ),
+        ),
+      );
+
+  // Ayar listesindeki bir satır: ikon, ad, sağda değer ve ok
+  Widget ayarSatiri({
+    required IconData ikon,
+    required String ad,
+    String? deger,
+    Color renk = kYazi,
+    required VoidCallback onTap,
+  }) {
+    return ListTile(
+      contentPadding: EdgeInsets.zero,
+      onTap: onTap,
+      leading: Icon(ikon, color: renk == kYazi ? kSoluk : renk),
+      title: Text(
+        ad,
+        style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700, color: renk),
+      ),
+      trailing: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (deger != null)
+            Text(
+              deger,
+              style: const TextStyle(fontWeight: FontWeight.w700, color: kTuruncu),
+            ),
+          const SizedBox(width: 4),
+          const Icon(Icons.chevron_right_rounded, color: Color(0xFF7E766E)),
+        ],
+      ),
+    );
+  }
+
+  // YENİ: Her şeyi sıfırlamadan önce mutlaka sorar
+  Future<void> sifirlaSor() async {
+    final eminMi = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('İlerleme sıfırlansın mı?'),
+        content: const Text(
+          'Bütün kelimeler hama döner; seri, takvim ve ders kayısıları silinir. '
+          'Bu işlem geri alınamaz.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Vazgeç'),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: const Color(0xFFE8674A)),
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Sıfırla'),
+          ),
+        ],
+      ),
+    );
+    if (eminMi != true || !mounted) return; // Vazgeç ya da dışarı dokunuldu
+    setState(() {
+      for (final k in kelimeler) {
+        k.seviye = 0;
+        k.yanlis = 0;
+        k.tekrar = null;
+      }
+      gecmis.clear();
+      dersPuanlari.clear();
+      bugun = 0;
+      aktif = kelimeSec();
+      onYuz = true;
+      kaydiriciyiKur();
+    });
+    final prefs = SharedPreferencesAsync();
+    // Çok eski sürümden kalan bugün sayacı geri gelmesin
+    await prefs.remove('tarih');
+    await prefs.remove('bugun');
+    await kelimeleriKaydet();
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('İlerleme sıfırlandı.')),
     );
   }
 
@@ -2058,8 +2293,7 @@ class _AnaSayfaState extends State<AnaSayfa> {
     );
   }
 
-  // Beyaz yuvarlak köşeli kutu
-  // Beyaz kutu. Container yerine Material: içindeki ListTile'ların dokunma efekti görünsün
+  // Koyu gri yuvarlak köşeli kutu. Container yerine Material: içindeki ListTile'ların dokunma efekti görünsün
   Widget kutu({required Widget child}) {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
@@ -2348,29 +2582,20 @@ class _AnaSayfaState extends State<AnaSayfa> {
     if (!tanitimTamam) {
       return TanitimSayfasi(profil: profil.kopya(), onBitti: tanitimBitti);
     }
-    // Sekmeler: 0 ana sayfa, 1 kartlar, 2 test, 3 paketler, 4 hasat
+    // Sekmeler: 0 ana sayfa, 1 kartlar, 2 test, 3 hasat, 4 profil
     final ekranlar = [
       anaSayfaEkrani(),
       kartEkrani(),
       testEkrani(),
-      paketlerEkrani(),
       hasatEkrani(),
+      profilEkrani(),
     ];
+    const basliklar = ['', 'Kartlar', 'Test', 'Hasat', 'Profil'];
     return Scaffold(
       // Ana sayfanın kendi üst şeridi var; başlık çubuğu sadece diğer sekmelerde
       appBar: sekme == 0
           ? null
-          : AppBar(
-              title: const Text('ApriEnglish'),
-              actions: [
-                IconButton(
-                  tooltip: 'Hesabım',
-                  onPressed: hesabiAc,
-                  icon: Text(profil.avatar, style: const TextStyle(fontSize: 28)),
-                ),
-                const SizedBox(width: 8),
-              ],
-            ),
+          : AppBar(title: Text(basliklar[sekme])),
       body: ekranlar[sekme],
       // YENİ: Sadece ikonlu alt menü (yazılar gizli, basılı tutunca görünür)
       bottomNavigationBar: NavigationBar(
@@ -2402,16 +2627,16 @@ class _AnaSayfaState extends State<AnaSayfa> {
             tooltip: 'Test',
           ),
           NavigationDestination(
-            icon: Icon(Icons.inventory_2_outlined, color: kSoluk),
-            selectedIcon: Icon(Icons.inventory_2, color: kTuruncu),
-            label: 'Paketler',
-            tooltip: 'Paketler',
-          ),
-          NavigationDestination(
             icon: Icon(Icons.wb_sunny_outlined, color: kSoluk),
             selectedIcon: Icon(Icons.wb_sunny, color: kTuruncu),
             label: 'Hasat',
             tooltip: 'Hasat',
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.person_outline_rounded, color: kSoluk),
+            selectedIcon: Icon(Icons.person_rounded, color: kTuruncu),
+            label: 'Profil',
+            tooltip: 'Profil',
           ),
         ],
       ),
