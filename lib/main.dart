@@ -255,7 +255,8 @@ class _AnaSayfaState extends State<AnaSayfa> {
   bool yuklendi = false;
   int sekme = 0;
   int bugun = 0; // bugün bilinen kelime sayısı
-  Profil profil = Profil(); // YENİ: ad, avatar, hedef, bildirim ayarları
+  Profil profil = Profil(); // ad, avatar, hedef, bildirim ayarları
+  bool tanitimTamam = true; // YENİ: ilk açılış tanıtımı görüldü mü
   Map<String, int> gecmis = {}; // her gün kaç kelime bilindi (takvim için)
 
   // Hasat ekranı
@@ -329,6 +330,7 @@ class _AnaSayfaState extends State<AnaSayfa> {
     if (eskiTarih != null && eskiSayi != null && !gecmis.containsKey(eskiTarih)) {
       gecmis[eskiTarih] = eskiSayi;
     }
+    final tanitimGoruldu = await prefs.getBool('tanitim') ?? false;
     final profilMetni = await prefs.getString('profil');
     if (profilMetni != null) {
       profil = Profil.fromJson(jsonDecode(profilMetni));
@@ -346,6 +348,7 @@ class _AnaSayfaState extends State<AnaSayfa> {
     }
     setState(() {
       bugun = gecmis[bugununTarihi()] ?? 0;
+      tanitimTamam = tanitimGoruldu;
       aktif = kelimeSec();
       yuklendi = true;
     });
@@ -467,6 +470,22 @@ class _AnaSayfaState extends State<AnaSayfa> {
       'Son 7 günde çalıştığın günlerde ortalama ${ortalama.round()} kelime bildin. '
           'Biraz zorlamak için $oneri öneriyoruz.',
     );
+  }
+
+  // YENİ: Tanıtım bitince seçimleri uygular ve kaydeder
+  Future<void> tanitimBitti(Profil yeni, Set<String> duzeyler) async {
+    setState(() {
+      profil = yeni;
+      seciliDuzeyler = duzeyler;
+      tanitimTamam = true;
+      aktif = kelimeSec();
+      onYuz = true;
+    });
+    final prefs = SharedPreferencesAsync();
+    await prefs.setBool('tanitim', true);
+    await prefs.setString('profil', jsonEncode(profil.toJson()));
+    await kelimeleriKaydet();
+    await bildirimiAyarla(profil.bildirim, profil.saat, profil.dakika);
   }
 
   // YENİ: Hesabım sayfasını açar, Kaydet'e basılırsa yeni profili uygular
@@ -1751,6 +1770,10 @@ class _AnaSayfaState extends State<AnaSayfa> {
         body: Center(child: CircularProgressIndicator()),
       );
     }
+    // YENİ: İlk açılışta önce tanıtım
+    if (!tanitimTamam) {
+      return TanitimSayfasi(profil: profil.kopya(), onBitti: tanitimBitti);
+    }
     final ekranlar = [kartEkrani(), testEkrani(), paketlerEkrani(), hasatEkrani()];
     return Scaffold(
       appBar: AppBar(
@@ -2124,6 +2147,416 @@ class _HesapSayfasiState extends State<HesapSayfasi> {
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+
+// ======================= Tanıtım (ilk açılış) =======================
+
+// YENİ: 5 sayfalık karşılama. Sağa kaydırarak ya da Devam ile ilerlenir.
+class TanitimSayfasi extends StatefulWidget {
+  final Profil profil;
+  final void Function(Profil profil, Set<String> duzeyler) onBitti;
+
+  const TanitimSayfasi({super.key, required this.profil, required this.onBitti});
+
+  @override
+  State<TanitimSayfasi> createState() => _TanitimSayfasiState();
+}
+
+class _TanitimSayfasiState extends State<TanitimSayfasi> {
+  static const sayfaSayisi = 5;
+  static const avatarlar = [
+    '👩', '👨', '🧑', '👧', '👦', '🧕', '🧔', '👵', '👴',
+    '👩‍🎓', '👨‍🎓', '👩‍💻', '👨‍💻', '👩‍🏫', '👨‍🏫',
+  ];
+
+  final PageController sayfaKontrol = PageController();
+  int sayfa = 0;
+  late Profil p;
+  late TextEditingController adKutusu;
+  String seviye = 'yeni'; // 'yeni', 'biraz', 'orta'
+
+  @override
+  void initState() {
+    super.initState();
+    p = widget.profil;
+    p.bildirim = true; // hatırlatma varsayılan olarak açık, istersen kapatırsın
+    adKutusu = TextEditingController(text: p.ad);
+  }
+
+  @override
+  void dispose() {
+    sayfaKontrol.dispose();
+    adKutusu.dispose();
+    super.dispose();
+  }
+
+  void ileri() {
+    FocusScope.of(context).unfocus(); // klavye açıksa kapat
+    if (sayfa < sayfaSayisi - 1) {
+      sayfaKontrol.nextPage(
+        duration: const Duration(milliseconds: 300),
+        curve: Curves.easeOut,
+      );
+    } else {
+      bitir();
+    }
+  }
+
+  void geri() {
+    sayfaKontrol.previousPage(
+      duration: const Duration(milliseconds: 300),
+      curve: Curves.easeOut,
+    );
+  }
+
+  void bitir() {
+    p.ad = adKutusu.text.trim();
+    // Seçilen seviyeye göre hangi paketler açık olsun
+    final duzeyler = switch (seviye) {
+      'biraz' => <String>{'A1', 'A2', 'Benim'},
+      'orta' => <String>{'A2', 'B1', 'Benim'},
+      _ => <String>{'A1', 'Benim'},
+    };
+    widget.onBitti(p, duzeyler);
+  }
+
+  // Her sayfanın ortak iskeleti: ortalanmış ve kaydırılabilir
+  Widget iskelet(List<Widget> icerik) {
+    return Center(
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 16),
+        child: Column(mainAxisSize: MainAxisSize.min, children: icerik),
+      ),
+    );
+  }
+
+  Widget baslik(String metin) => Padding(
+        padding: const EdgeInsets.only(bottom: 12),
+        child: Text(
+          metin,
+          textAlign: TextAlign.center,
+          style: const TextStyle(
+            fontSize: 26,
+            fontWeight: FontWeight.bold,
+            color: kKoyuTuruncu,
+          ),
+        ),
+      );
+
+  Widget aciklama(String metin) => Text(
+        metin,
+        textAlign: TextAlign.center,
+        style: const TextStyle(fontSize: 16, color: kKahve, height: 1.4),
+      );
+
+  // Seçilebilir kart (seviye ve hedef sayfalarında)
+  Widget secenek({
+    required bool secili,
+    required String emoji,
+    required String ad,
+    required String detay,
+    required VoidCallback onTap,
+  }) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: Material(
+        color: secili ? kAcikTuruncu : Colors.white,
+        borderRadius: BorderRadius.circular(18),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(18),
+          onTap: onTap,
+          child: Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(18),
+              border: Border.all(
+                color: secili ? kTuruncu : Colors.transparent,
+                width: 2,
+              ),
+            ),
+            child: Row(
+              children: [
+                Text(emoji, style: const TextStyle(fontSize: 30)),
+                const SizedBox(width: 14),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        ad,
+                        style: const TextStyle(
+                          fontSize: 17,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      Text(detay, style: const TextStyle(color: kKahve)),
+                    ],
+                  ),
+                ),
+                if (secili) const Icon(Icons.check_circle, color: kTuruncu),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  // Sayfa 1: Hoş geldin
+  Widget hosgeldin() {
+    return iskelet([
+      SizedBox(
+        width: 190,
+        height: 210,
+        child: TweenAnimationBuilder<double>(
+          tween: Tween(begin: 0, end: 1),
+          duration: const Duration(milliseconds: 1400),
+          curve: Curves.easeInOut,
+          builder: (context, v, _) => CustomPaint(
+            painter: KayisiCizim(renk: kTuruncu, doluluk: v),
+          ),
+        ),
+      ),
+      const SizedBox(height: 28),
+      baslik("ApriEnglish'e\nhoş geldin!"),
+      aciklama('İngilizce kelimeleri kayısı kartlarıyla, her gün biraz biraz öğren.'),
+    ]);
+  }
+
+  // Sayfa 2: Nasıl çalışır
+  Widget nasilCalisir() {
+    Widget satir(IconData ikon, String ad, String detay) {
+      return Padding(
+        padding: const EdgeInsets.only(bottom: 18),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            CircleAvatar(
+              radius: 26,
+              backgroundColor: kAcikTuruncu,
+              child: Icon(ikon, color: kKoyuTuruncu, size: 28),
+            ),
+            const SizedBox(width: 16),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    ad,
+                    style: const TextStyle(fontSize: 17, fontWeight: FontWeight.bold),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(detay, style: const TextStyle(color: kKahve, height: 1.3)),
+                ],
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    return iskelet([
+      baslik('Nasıl çalışır?'),
+      const SizedBox(height: 8),
+      satir(Icons.style, 'Kartları çevir',
+          'Kelimeyi gör, karta dokun, anlamını öğren. Bildin mi, bilemedin mi söyle.'),
+      satir(Icons.wb_sunny, 'Kayısını kurut',
+          '3 kez bildiğin kelime kurutmaya alınır. Birkaç gün sonra yine bilirsen kalıcı olur.'),
+      satir(Icons.edit, 'Kendini test et',
+          'Çoktan seçmeli, yazarak ya da sadece dinleyerek.'),
+    ]);
+  }
+
+  // Sayfa 3: Avatar ve ad
+  Widget tanisalim() {
+    return iskelet([
+      baslik('Seni tanıyalım'),
+      CircleAvatar(
+        radius: 48,
+        backgroundColor: kAcikTuruncu,
+        child: Text(p.avatar, style: const TextStyle(fontSize: 52)),
+      ),
+      const SizedBox(height: 16),
+      Wrap(
+        alignment: WrapAlignment.center,
+        spacing: 8,
+        runSpacing: 8,
+        children: [
+          for (final a in avatarlar)
+            GestureDetector(
+              onTap: () => setState(() => p.avatar = a),
+              child: Container(
+                width: 46,
+                height: 46,
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: p.avatar == a ? kAcikTuruncu : Colors.white,
+                  border: Border.all(
+                    color: p.avatar == a ? kTuruncu : Colors.transparent,
+                    width: 2.5,
+                  ),
+                ),
+                child: Text(a, style: const TextStyle(fontSize: 24)),
+              ),
+            ),
+        ],
+      ),
+      const SizedBox(height: 20),
+      TextField(
+        controller: adKutusu,
+        textAlign: TextAlign.center,
+        textCapitalization: TextCapitalization.words,
+        style: const TextStyle(fontSize: 18),
+        decoration: InputDecoration(
+          hintText: 'Adın',
+          filled: true,
+          fillColor: Colors.white,
+          border: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(16),
+            borderSide: BorderSide.none,
+          ),
+        ),
+        onSubmitted: (_) => ileri(),
+      ),
+    ]);
+  }
+
+  // Sayfa 4: Seviye
+  Widget seviyeSec() {
+    return iskelet([
+      baslik('İngilizcen ne durumda?'),
+      aciklama('Sana uygun kelimelerle başlayalım.'),
+      const SizedBox(height: 20),
+      secenek(
+        secili: seviye == 'yeni',
+        emoji: '🌱',
+        ad: 'Yeni başlıyorum',
+        detay: 'A1 · en temel kelimeler',
+        onTap: () => setState(() => seviye = 'yeni'),
+      ),
+      secenek(
+        secili: seviye == 'biraz',
+        emoji: '🌿',
+        ad: 'Biraz biliyorum',
+        detay: 'A1 + A2 · günlük hayat',
+        onTap: () => setState(() => seviye = 'biraz'),
+      ),
+      secenek(
+        secili: seviye == 'orta',
+        emoji: '🌳',
+        ad: 'Orta seviyeyim',
+        detay: 'A2 + B1 · iş, eğitim, fikirler',
+        onTap: () => setState(() => seviye = 'orta'),
+      ),
+    ]);
+  }
+
+  // Sayfa 5: Hedef ve hatırlatma
+  Widget hedefSec() {
+    Widget hedef(int sayi, String emoji, String ad) => secenek(
+          secili: p.hedef == sayi,
+          emoji: emoji,
+          ad: '$sayi kelime / gün',
+          detay: ad,
+          onTap: () => setState(() => p.hedef = sayi),
+        );
+    return iskelet([
+      baslik('Günlük hedefin'),
+      aciklama('İstediğin zaman Hesabım\'dan değiştirebilirsin.'),
+      const SizedBox(height: 20),
+      hedef(5, '☕', 'Rahat · yaklaşık 5 dakika'),
+      hedef(10, '🍑', 'Normal · yaklaşık 10 dakika'),
+      hedef(20, '🔥', 'Ciddi · yaklaşık 20 dakika'),
+      hedef(30, '🚀', 'Yoğun · yaklaşık 30 dakika'),
+      const SizedBox(height: 6),
+      SwitchListTile(
+        contentPadding: EdgeInsets.zero,
+        title: const Text('Her akşam hatırlat'),
+        subtitle: Text(
+          'Saat ${p.saat.toString().padLeft(2, '0')}:${p.dakika.toString().padLeft(2, '0')}'
+          ' · saati Hesabım\'dan değiştirebilirsin',
+        ),
+        value: p.bildirim,
+        onChanged: (acik) => setState(() => p.bildirim = acik),
+      ),
+    ]);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final sonSayfa = sayfa == sayfaSayisi - 1;
+    return Scaffold(
+      backgroundColor: kKrem,
+      body: SafeArea(
+        child: Column(
+          children: [
+            // Sağ üstte "Geç": varsayılanlarla hemen başlar
+            Align(
+              alignment: Alignment.centerRight,
+              child: TextButton(
+                onPressed: sonSayfa ? null : bitir,
+                child: Text(sonSayfa ? '' : 'Geç'),
+              ),
+            ),
+            Expanded(
+              child: PageView(
+                controller: sayfaKontrol,
+                onPageChanged: (i) => setState(() => sayfa = i),
+                children: [
+                  hosgeldin(),
+                  nasilCalisir(),
+                  tanisalim(),
+                  seviyeSec(),
+                  hedefSec(),
+                ],
+              ),
+            ),
+            // Sayfa noktaları: aktif olan uzun turuncu
+            Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: List.generate(sayfaSayisi, (i) {
+                return AnimatedContainer(
+                  duration: const Duration(milliseconds: 250),
+                  margin: const EdgeInsets.symmetric(horizontal: 4),
+                  width: i == sayfa ? 26 : 10,
+                  height: 10,
+                  decoration: BoxDecoration(
+                    color: i == sayfa ? kTuruncu : const Color(0xFFE8D5C0),
+                    borderRadius: BorderRadius.circular(5),
+                  ),
+                );
+              }),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 16, 20, 20),
+              child: Row(
+                children: [
+                  if (sayfa > 0)
+                    TextButton(onPressed: geri, child: const Text('Geri')),
+                  const Spacer(),
+                  SizedBox(
+                    height: 54,
+                    child: FilledButton(
+                      onPressed: ileri,
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 12),
+                        child: Text(
+                          sonSayfa ? 'Başlayalım! 🍑' : 'Devam',
+                          style: const TextStyle(fontSize: 18),
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
