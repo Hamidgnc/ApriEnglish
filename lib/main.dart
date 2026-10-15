@@ -1,7 +1,6 @@
 import 'dart:convert';
 import 'dart:math';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:flutter_tts/flutter_tts.dart';
 import 'package:http/http.dart' as http; // YENİ: internete mesaj göndermek için
@@ -2053,97 +2052,151 @@ class _AnaSayfaState extends State<AnaSayfa> {
     );
   }
 
+  // YENİ: Pratik turu sonu: ders sonu ekranıyla aynı dil
   Widget sonucEkrani() {
     final toplam = turSorulari.length;
     final oran = toplam == 0 ? 0.0 : turDogru / toplam;
-    final mesaj = oran >= 0.9
-        ? 'Harika! 🍑'
-        : (oran >= 0.6 ? 'Güzel gidiyorsun!' : 'Tekrar etmeye devam!');
-    return ListView(
-      padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
-      children: [
-        Center(
-          child: SizedBox(
-            width: 180,
-            height: 200,
-            child: CustomPaint(
-              painter: KayisiCizim(renk: kTuruncu, doluluk: oran),
-              child: Padding(
-                padding: const EdgeInsets.only(top: 60),
-                child: Center(
-                  child: Text(
-                    '$turDogru/$toplam',
-                    style: TextStyle(
-                      fontSize: 40,
-                      fontWeight: FontWeight.bold,
-                      color: oran >= 0.5 ? Colors.white : kParlakTuruncu,
+    // Kayısı sayısı derslerle aynı kural: %90+ = 3, %60+ = 2, gerisi 1
+    final puan = oran >= 0.9 ? 3 : (oran >= 0.6 ? 2 : 1);
+    final mesaj = switch (puan) {
+      3 => 'Harika!',
+      2 => 'Güzel gidiyorsun!',
+      _ => 'Tekrar etmeye devam!',
+    };
+    final modAdi = switch (testModu) {
+      'yazma' => 'Yaz',
+      'dinle' => 'Dinle',
+      _ => 'Çoktan seçmeli',
+    };
+    return SafeArea(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(20, 36, 20, 16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            // Ortadaki kayısı büyük, yanlardakiler küçük; sırayla dolar
+            Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: List.generate(3, (i) {
+                final boy = i == 1 ? 86.0 : 64.0;
+                final dolu = i < puan;
+                return Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 8),
+                  child: TweenAnimationBuilder<double>(
+                    tween: Tween(begin: 0, end: dolu ? 1 : 0),
+                    duration: Duration(milliseconds: 500 + i * 300),
+                    builder: (context, v, _) => SizedBox(
+                      width: boy * 0.88,
+                      height: boy,
+                      child: CustomPaint(
+                        painter: KayisiCizim(
+                          renk: dolu ? kTuruncu : kCizgi,
+                          doluluk: v,
+                        ),
+                      ),
                     ),
                   ),
+                );
+              }),
+            ),
+            const SizedBox(height: 22),
+            Text(
+              mesaj,
+              textAlign: TextAlign.center,
+              style: const TextStyle(fontSize: 32, fontWeight: FontWeight.w900),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              'Pratik · $modAdi',
+              textAlign: TextAlign.center,
+              style: const TextStyle(
+                fontSize: 16,
+                fontWeight: FontWeight.w600,
+                color: kSoluk,
+              ),
+            ),
+            const SizedBox(height: 26),
+            Row(
+              children: [
+                ozetKutusu('DOĞRU', '$turDogru/$toplam', const Color(0xFF4CC37A)),
+                const SizedBox(width: 10),
+                ozetKutusu('YANLIŞ', '${turYanlislar.length}', const Color(0xFFE8674A)),
+                const SizedBox(width: 10),
+                ozetKutusu('BUGÜN', '$bugun kelime', kTuruncu),
+              ],
+            ),
+            const SizedBox(height: 20),
+            // Yanlışlar: sığmazsa sadece bu kutu kayar
+            if (turYanlislar.isNotEmpty)
+              Expanded(
+                child: Container(
+                  decoration: BoxDecoration(
+                    color: kKart,
+                    borderRadius: BorderRadius.circular(20),
+                  ),
+                  child: ListView(
+                    padding: const EdgeInsets.symmetric(vertical: 8),
+                    children: [
+                      const Padding(
+                        padding: EdgeInsets.fromLTRB(16, 8, 16, 0),
+                        child: Text(
+                          'Tekrar edilecekler',
+                          style: TextStyle(fontWeight: FontWeight.w800, fontSize: 15),
+                        ),
+                      ),
+                      for (final k in turYanlislar)
+                        ListTile(
+                          title: Text(
+                            k.ing,
+                            style: const TextStyle(fontWeight: FontWeight.w800),
+                          ),
+                          subtitle: Text(k.anlam, style: const TextStyle(color: kSoluk)),
+                          trailing: IconButton(
+                            tooltip: 'Dinle',
+                            icon: const Icon(Icons.volume_up_rounded, color: kTuruncu),
+                            onPressed: () => oku(k.ing),
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+              )
+            else
+              const Spacer(),
+            const SizedBox(height: 16),
+            SizedBox(
+              height: 58,
+              child: FilledButton(
+                onPressed: () => turBaslat(testModu),
+                style: FilledButton.styleFrom(
+                  backgroundColor: kTuruncu,
+                  foregroundColor: const Color(0xFF1A0E05),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+                  textStyle: const TextStyle(
+                    fontFamily: 'Nunito',
+                    fontSize: 17,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+                child: const Text('Yeni tur'),
+              ),
+            ),
+            const SizedBox(height: 6),
+            TextButton(
+              onPressed: () => setState(() => testDurumu = 'secim'),
+              child: const Text(
+                'Pratik listesine dön',
+                style: TextStyle(
+                  color: kSoluk,
+                  fontWeight: FontWeight.w800,
+                  fontSize: 16,
                 ),
               ),
             ),
-          ),
+          ],
         ),
-        const SizedBox(height: 12),
-        Text(
-          mesaj,
-          textAlign: TextAlign.center,
-          style: const TextStyle(
-            fontSize: 24,
-            fontWeight: FontWeight.bold,
-            color: kParlakTuruncu,
-          ),
-        ),
-        const SizedBox(height: 20),
-        if (turYanlislar.isNotEmpty)
-          Material(
-            color: kKart,
-            borderRadius: BorderRadius.circular(20),
-            child: Padding(
-              padding: const EdgeInsets.symmetric(vertical: 8),
-              child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Padding(
-                  padding: EdgeInsets.fromLTRB(16, 8, 16, 0),
-                  child: Text(
-                    'Tekrar et',
-                    style: TextStyle(fontWeight: FontWeight.bold, color: kSoluk),
-                  ),
-                ),
-                for (final k in turYanlislar)
-                  ListTile(
-                    title: Text(
-                      k.ing,
-                      style: const TextStyle(fontWeight: FontWeight.bold),
-                    ),
-                    subtitle: Text(k.anlam),
-                    trailing: IconButton(
-                      icon: const Icon(Icons.volume_up, color: kTuruncu),
-                      onPressed: () => oku(k.ing),
-                    ),
-                  ),
-              ],
-            ),
-          ),
-          ),
-        const SizedBox(height: 20),
-        SizedBox(
-          height: 56,
-          child: FilledButton(
-            onPressed: () => turBaslat(testModu),
-            child: const Text('Yeni tur', style: TextStyle(fontSize: 18)),
-          ),
-        ),
-        const SizedBox(height: 10),
-        SizedBox(
-          height: 52,
-          child: OutlinedButton(
-            onPressed: () => setState(() => testDurumu = 'secim'),
-            child: const Text('Mod değiştir'),
-          ),
-        ),
-      ],
+      ),
     );
   }
 
@@ -2934,8 +2987,8 @@ class _AnaSayfaState extends State<AnaSayfa> {
     ];
     // Pratik'te kartlar açıksa başlıkta "Kartlar" yazsın ve geri oku çıksın
     final kartlarAcik = sekme == 1 && testDurumu == 'kartlar';
-    // Soru çözerken başlık ve alt menü gizlenir, ekranın tamamı soruya kalır
-    final odak = sekme == 1 && testDurumu == 'soru';
+    // Soru çözerken ve sonuçta başlık ile alt menü gizlenir, ekran tamamen ona kalır
+    final odak = sekme == 1 && (testDurumu == 'soru' || testDurumu == 'sonuc');
     final baslik = kartlarAcik ? 'Kartlar' : ['', 'Pratik', 'Hasat', 'Profil'][sekme];
     final sayfa = Scaffold(
       // Ana sayfanın kendi üst şeridi var; başlık çubuğu sadece diğer sekmelerde
@@ -3084,20 +3137,17 @@ class _HesapSayfasiState extends State<HesapSayfasi> {
 
   late Profil p;
   late TextEditingController adKutusu;
-  late TextEditingController hedefKutusu;
 
   @override
   void initState() {
     super.initState();
     p = widget.profil;
     adKutusu = TextEditingController(text: p.ad);
-    hedefKutusu = TextEditingController(text: '${p.hedef}');
   }
 
   @override
   void dispose() {
     adKutusu.dispose();
-    hedefKutusu.dispose();
     super.dispose();
   }
 
@@ -3116,47 +3166,67 @@ class _HesapSayfasiState extends State<HesapSayfasi> {
     });
   }
 
+  // YENİ: Hedef artık yazılmıyor, − / + ile değişiyor; 5'er 5'er, 5 ile 100 arası
+  void hedefDegistir(int fark) {
+    setState(() {
+      p.hedef = (p.hedef + fark).clamp(5, 100).toInt();
+    });
+  }
+
   void kaydet() {
-    final hedef = int.tryParse(hedefKutusu.text) ?? 0;
-    if (hedef < 1 || hedef > 100) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Günlük hedef 1 ile 100 arasında olmalı.')),
-      );
-      return;
-    }
     p.ad = adKutusu.text.trim();
-    p.hedef = hedef;
     Navigator.pop(context, p); // profili ana sayfaya geri gönder
   }
 
-  // Beyaz kutu. Container yerine Material: içindeki ListTile'ların dokunma efekti görünsün
+  // Gri, küçük, aralıklı harfli bölüm başlığı
+  Widget baslik(String metin) => Padding(
+        padding: const EdgeInsets.fromLTRB(4, 20, 4, 8),
+        child: Text(
+          metin,
+          style: const TextStyle(
+            fontSize: 13,
+            fontWeight: FontWeight.w800,
+            letterSpacing: 1.4,
+            color: Color(0xFF7E766E),
+          ),
+        ),
+      );
+
+  // Koyu gri kutu. Material: içindeki dokunma efektleri görünsün
   Widget kutu({required Widget child}) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 12),
-      child: Material(
-        color: kKart,
-        borderRadius: BorderRadius.circular(20),
-        child: Padding(padding: const EdgeInsets.all(16), child: child),
-      ),
+    return Material(
+      color: kKart,
+      borderRadius: BorderRadius.circular(20),
+      clipBehavior: Clip.antiAlias,
+      child: Padding(padding: const EdgeInsets.all(16), child: child),
     );
   }
 
-  Widget baslik(String metin) => Padding(
-        padding: const EdgeInsets.only(bottom: 10),
-        child: Text(
-          metin,
-          style: const TextStyle(fontWeight: FontWeight.bold, color: kSoluk),
+  // − ve + için yuvarlak buton
+  Widget artiEksi(IconData ikon, VoidCallback onTap) {
+    return Material(
+      color: kCizgi,
+      shape: const CircleBorder(),
+      child: InkWell(
+        customBorder: const CircleBorder(),
+        onTap: onTap,
+        child: SizedBox(
+          width: 48,
+          height: 48,
+          child: Icon(ikon, color: kYazi),
         ),
-      );
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(title: const Text('Hesabım')),
       body: ListView(
-        padding: const EdgeInsets.fromLTRB(16, 8, 16, 32),
+        padding: const EdgeInsets.fromLTRB(16, 4, 16, 24),
         children: [
-          // Büyük avatar
+          // Büyük avatar ve altında ad
           Center(
             child: CircleAvatar(
               radius: 52,
@@ -3165,84 +3235,91 @@ class _HesapSayfasiState extends State<HesapSayfasi> {
             ),
           ),
           const SizedBox(height: 16),
+          TextField(
+            controller: adKutusu,
+            textAlign: TextAlign.center,
+            textCapitalization: TextCapitalization.words,
+            style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w800),
+            decoration: InputDecoration(
+              hintText: 'Adın',
+              filled: true,
+              fillColor: kKart,
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(16),
+                borderSide: BorderSide.none,
+              ),
+            ),
+          ),
 
-          // Avatar seçimi
+          baslik('AVATAR'),
           kutu(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
+            child: Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              alignment: WrapAlignment.center,
               children: [
-                baslik('Avatarını seç'),
-                Wrap(
-                  spacing: 8,
-                  runSpacing: 8,
-                  children: [
-                    for (final a in avatarlar)
-                      GestureDetector(
-                        onTap: () => setState(() => p.avatar = a),
-                        child: Container(
-                          width: 48,
-                          height: 48,
-                          alignment: Alignment.center,
-                          decoration: BoxDecoration(
-                            shape: BoxShape.circle,
-                            color: p.avatar == a ? kVurguZemin : kCizgi,
-                            border: Border.all(
-                              color: p.avatar == a ? kTuruncu : Colors.transparent,
-                              width: 2.5,
-                            ),
-                          ),
-                          child: Text(a, style: const TextStyle(fontSize: 26)),
+                for (final a in avatarlar)
+                  GestureDetector(
+                    onTap: () => setState(() => p.avatar = a),
+                    child: Container(
+                      width: 48,
+                      height: 48,
+                      alignment: Alignment.center,
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        color: p.avatar == a ? kVurguZemin : kCizgi,
+                        border: Border.all(
+                          color: p.avatar == a ? kTuruncu : Colors.transparent,
+                          width: 2.5,
                         ),
                       ),
+                      child: Text(a, style: const TextStyle(fontSize: 26)),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+
+          baslik('GÜNLÜK HEDEF'),
+          kutu(
+            child: Column(
+              children: [
+                Row(
+                  children: [
+                    artiEksi(Icons.remove_rounded, () => hedefDegistir(-5)),
+                    Expanded(
+                      child: Column(
+                        children: [
+                          Text(
+                            '${p.hedef}',
+                            style: const TextStyle(
+                              fontSize: 40,
+                              fontWeight: FontWeight.w900,
+                              color: kTuruncu,
+                              height: 1.1,
+                            ),
+                          ),
+                          const Text(
+                            'kelime / gün',
+                            style: TextStyle(color: kSoluk, fontWeight: FontWeight.w600),
+                          ),
+                        ],
+                      ),
+                    ),
+                    artiEksi(Icons.add_rounded, () => hedefDegistir(5)),
                   ],
                 ),
-              ],
-            ),
-          ),
-
-          // Ad
-          kutu(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                baslik('Adın'),
-                TextField(
-                  controller: adKutusu,
-                  textCapitalization: TextCapitalization.words,
-                  decoration: const InputDecoration(
-                    hintText: 'Örneğin: Hamid',
-                    border: OutlineInputBorder(),
-                  ),
-                ),
-              ],
-            ),
-          ),
-
-          // Günlük hedef + öneri
-          kutu(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                baslik('Günlük hedef'),
-                TextField(
-                  controller: hedefKutusu,
-                  keyboardType: TextInputType.number,
-                  inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-                  decoration: const InputDecoration(
-                    suffixText: 'kelime / gün',
-                    border: OutlineInputBorder(),
-                  ),
-                ),
-                const SizedBox(height: 12),
+                const SizedBox(height: 14),
+                // Uygulamanın önerisi: son 7 güne göre
                 Container(
-                  padding: const EdgeInsets.all(12),
+                  padding: const EdgeInsets.fromLTRB(12, 10, 4, 10),
                   decoration: BoxDecoration(
                     color: kZemin,
                     borderRadius: BorderRadius.circular(14),
                   ),
                   child: Row(
                     children: [
-                      const Icon(Icons.lightbulb_outline, color: kParlakTuruncu),
+                      const Icon(Icons.lightbulb_outline_rounded, color: kTuruncu, size: 22),
                       const SizedBox(width: 10),
                       Expanded(
                         child: Text(
@@ -3251,10 +3328,11 @@ class _HesapSayfasiState extends State<HesapSayfasi> {
                         ),
                       ),
                       TextButton(
-                        onPressed: () => setState(
-                          () => hedefKutusu.text = '${widget.oneri}',
+                        onPressed: () => setState(() => p.hedef = widget.oneri),
+                        child: Text(
+                          '${widget.oneri} yap',
+                          style: const TextStyle(fontWeight: FontWeight.w900),
                         ),
-                        child: Text('${widget.oneri} uygula'),
                       ),
                     ],
                   ),
@@ -3263,88 +3341,112 @@ class _HesapSayfasiState extends State<HesapSayfasi> {
             ),
           ),
 
-          // Bildirim
+          baslik('HATIRLATMA'),
           kutu(
             child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                baslik('Bildirim'),
                 SwitchListTile(
                   contentPadding: EdgeInsets.zero,
-                  title: const Text('Günlük hatırlatma'),
-                  subtitle: const Text('Her gün seçtiğin saatte hatırlatır'),
+                  title: const Text(
+                    'Günlük hatırlatma',
+                    style: TextStyle(fontWeight: FontWeight.w700),
+                  ),
+                  subtitle: const Text(
+                    'Her gün seçtiğin saatte hatırlatır',
+                    style: TextStyle(color: kSoluk),
+                  ),
                   value: p.bildirim,
                   onChanged: (acik) => setState(() => p.bildirim = acik),
                 ),
                 ListTile(
                   contentPadding: EdgeInsets.zero,
                   enabled: p.bildirim,
-                  leading: const Icon(Icons.alarm),
-                  title: const Text('Saat'),
+                  leading: const Icon(Icons.schedule_rounded),
+                  title: const Text('Saat', style: TextStyle(fontWeight: FontWeight.w700)),
                   trailing: Text(
                     saatMetni(),
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontSize: 20,
-                      fontWeight: FontWeight.bold,
-                      color: kParlakTuruncu,
+                      fontWeight: FontWeight.w900,
+                      color: p.bildirim ? kTuruncu : const Color(0xFF5C554F),
                     ),
                   ),
                   onTap: p.bildirim ? saatSec : null,
                 ),
-                TextButton.icon(
-                  onPressed: denemeBildirimi,
-                  icon: const Icon(Icons.notifications_active_outlined),
-                  label: const Text('Deneme bildirimi gönder'),
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: TextButton.icon(
+                    onPressed: denemeBildirimi,
+                    icon: const Icon(Icons.notifications_active_outlined),
+                    label: const Text('Deneme bildirimi gönder'),
+                  ),
                 ),
               ],
             ),
           ),
 
-          // İstatistikler
-          kutu(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                baslik('İstatistikler'),
-                GridView.count(
-                  crossAxisCount: 3,
-                  shrinkWrap: true,
-                  physics: const NeverScrollableScrollPhysics(),
-                  childAspectRatio: 1.1,
-                  children: [
-                    for (final e in widget.istatistikler.entries)
-                      Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Text(
-                            '${e.value}',
-                            style: const TextStyle(
-                              fontSize: 26,
-                              fontWeight: FontWeight.bold,
-                              color: kParlakTuruncu,
-                            ),
-                          ),
-                          Text(
-                            e.key,
-                            textAlign: TextAlign.center,
-                            style: const TextStyle(fontSize: 12, color: kSoluk),
-                          ),
-                        ],
+          baslik('İSTATİSTİKLER'),
+          // 3 sütunlu kutucuklar
+          GridView.count(
+            crossAxisCount: 3,
+            shrinkWrap: true,
+            physics: const NeverScrollableScrollPhysics(),
+            mainAxisSpacing: 10,
+            crossAxisSpacing: 10,
+            childAspectRatio: 1.05,
+            children: [
+              for (final e in widget.istatistikler.entries)
+                Container(
+                  decoration: BoxDecoration(
+                    color: kKart,
+                    borderRadius: BorderRadius.circular(18),
+                  ),
+                  padding: const EdgeInsets.all(6),
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Text(
+                        '${e.value}',
+                        style: const TextStyle(
+                          fontSize: 26,
+                          fontWeight: FontWeight.w900,
+                          color: kTuruncu,
+                        ),
                       ),
-                  ],
+                      Text(
+                        e.key,
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(fontSize: 12, color: kSoluk),
+                      ),
+                    ],
+                  ),
                 ),
-              ],
-            ),
-          ),
-
-          SizedBox(
-            height: 56,
-            child: FilledButton(
-              onPressed: kaydet,
-              child: const Text('Kaydet', style: TextStyle(fontSize: 18)),
-            ),
+            ],
           ),
         ],
+      ),
+      // Kaydet butonu altta sabit: liste ne kadar uzun olursa olsun görünür
+      bottomNavigationBar: SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
+          child: SizedBox(
+            height: 58,
+            child: FilledButton(
+              onPressed: kaydet,
+              style: FilledButton.styleFrom(
+                backgroundColor: kTuruncu,
+                foregroundColor: const Color(0xFF1A0E05),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+                textStyle: const TextStyle(
+                  fontFamily: 'Nunito',
+                  fontSize: 17,
+                  fontWeight: FontWeight.w900,
+                ),
+              ),
+              child: const Text('Kaydet'),
+            ),
+          ),
+        ),
       ),
     );
   }
