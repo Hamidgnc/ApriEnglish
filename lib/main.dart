@@ -19,6 +19,13 @@ const kVurguZemin = Color(0xFF2A2016); // seçili şeylerin turuncumsu zemini
 const kYazi = Color(0xFFF7F2EC); // ana yazı rengi
 const kSoluk = Color(0xFFA39B92); // açıklama yazıları
 
+// Paketteki seviyeler, kolaydan zora. Seviye eklenirse sadece burası değişir.
+const seviyeler = ['A1', 'A2', 'B1', 'B2'];
+
+// Bir seviyenin ders başlıkları (ders planından)
+List<String> dersBasliklari(String duzey) =>
+    [for (final d in dersPlani) if (d.$1 == duzey) d.$2];
+
 // YENİ: Telefonun bildirim sistemi
 final FlutterLocalNotificationsPlugin bildirimler = FlutterLocalNotificationsPlugin();
 
@@ -253,7 +260,7 @@ class HalkaCizim extends CustomPainter {
 }
 
 // YENİ: Ders kartındaki manzara: gökyüzü, güneş, tepeler ve kayısı ağaçları.
-// Her seviyenin gökyüzü farklı: A1 gün batımı, A2 öğle, B1 gece.
+// Her seviyenin gökyüzü farklı: A1 gün batımı, A2 öğle, B1 gece, B2 şafak.
 class ManzaraCizim extends CustomPainter {
   final String duzey;
 
@@ -275,6 +282,12 @@ class ManzaraCizim extends CustomPainter {
           const Color(0xFFE9E6D0),
           const Color(0xFF2A2848),
           const Color(0xFF17162B),
+        ),
+      'B2' => (
+          const [Color(0xFF16323F), Color(0xFF3B7482), Color(0xFFF0BE96)],
+          const Color(0xFFFFE6B8),
+          const Color(0xFF35524F),
+          const Color(0xFF1C2C2A),
         ),
       _ => (
           const [Color(0xFF2B2240), Color(0xFF8E4A58), Color(0xFFE9955A)],
@@ -398,6 +411,7 @@ class _AnaSayfaState extends State<AnaSayfa> {
     'A1': 'Başlangıç',
     'A2': 'Temel',
     'B1': 'Orta',
+    'B2': 'Orta üstü',
     'Benim': 'Benim kelimelerim',
   };
 
@@ -411,7 +425,11 @@ class _AnaSayfaState extends State<AnaSayfa> {
   int bugun = 0; // bugün bilinen kelime sayısı
   Profil profil = Profil(); // ad, avatar, hedef, bildirim ayarları
   bool tanitimTamam = true; // YENİ: ilk açılış tanıtımı görüldü mü
+  bool tanitimTekrar = false; // YENİ: tanıtım Profil'den tekrar mı izleniyor (çıkılabilir)
   Map<String, int> gecmis = {}; // her gün kaç kelime bilindi (takvim için)
+  int sepet = 0; // YENİ: kayısı sepeti sayısı (0-2); kaçırılan günde seriyi korur
+  Set<String> korunanGunler = {}; // YENİ: sepetle korunan günler (seri bozulmaz)
+  String? sonSepet; // YENİ: en son sepet kazanılan gün
   List<Ders> dersler = []; // YENİ: paketten oluşturulan dersler
   Map<String, int> dersPuanlari = {}; // YENİ: "A1-3" -> kazanılan kayısı (0-3)
   PageController? dersKaydirici; // YENİ: ana sayfadaki ders kartlarını kaydırır
@@ -498,11 +516,14 @@ class _AnaSayfaState extends State<AnaSayfa> {
       seciliDuzeyler = Set<String>.from(jsonDecode(duzeyMetni));
     }
     // YENİ: Hazır paket daha önce eklenmediyse ekle
+    // Paket sürümü: yeni kelimeler eklendikçe artar (1: 582 kelime, 2: ~3000 kelime + B2).
+    // Telefondaki sürüm eskiyse eksik kelimeler eklenir, var olanların ilerlemesi korunur.
+    const guncelPaket = 2;
     final paketSurumu = await prefs.getInt('paket') ?? 0;
-    final paketEklendi = paketSurumu < 1;
+    final paketEklendi = paketSurumu < guncelPaket;
     if (paketEklendi) {
       paketiEkle();
-      await prefs.setInt('paket', 1);
+      await prefs.setInt('paket', guncelPaket);
     }
     // YENİ: Ders puanlarını yükle, dersleri kur, kaydırıcıyı sıradaki derste aç
     final puanMetni = await prefs.getString('dersPuanlari');
@@ -513,15 +534,29 @@ class _AnaSayfaState extends State<AnaSayfa> {
     dersleriOlustur();
     // Kayıtlı aktif seviye yoksa açık seviyelerden ilkini al
     aktifDuzey = await prefs.getString('aktifDuzey') ??
-        ['A1', 'A2', 'B1'].firstWhere(seciliDuzeyler.contains, orElse: () => 'A1');
+        seviyeler.firstWhere(seciliDuzeyler.contains, orElse: () => 'A1');
     kaydiriciyiKur();
+    // YENİ: Sepet bilgileri ve en son ne zaman girildiği
+    sepet = await prefs.getInt('sepet') ?? 0;
+    korunanGunler = Set<String>.from(await prefs.getStringList('korunanGunler') ?? []);
+    sonSepet = await prefs.getString('sonSepet');
+    final sonGiris = await prefs.getString('sonGiris');
+    final yokGun = sonGiris == null
+        ? 0
+        : DateTime.parse(bugununTarihi()).difference(DateTime.parse(sonGiris)).inDays;
+    final kullanilan = sepetleKoru(); // dün gelmediysen sepet devreye girer
+    await prefs.setString('sonGiris', bugununTarihi());
     setState(() {
       bugun = gecmis[bugununTarihi()] ?? 0;
       tanitimTamam = tanitimGoruldu;
       aktif = kelimeSec();
       yuklendi = true;
     });
-    if (paketEklendi) kelimeleriKaydet();
+    if (paketEklendi || kullanilan > 0) kelimeleriKaydet();
+    // Ekran çizildikten sonra gerekiyorsa "tekrar hoş geldin" ya da sepet mesajı
+    if (tanitimGoruldu) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => donusMesaji(yokGun, kullanilan));
+    }
   }
 
   // YENİ: Paketteki kelimeleri listeye ekler. Zaten olanlara dokunmaz,
@@ -546,31 +581,29 @@ class _AnaSayfaState extends State<AnaSayfa> {
     await prefs.setString('duzeyler', jsonEncode(seciliDuzeyler.toList()));
     await prefs.setString('dersPuanlari', jsonEncode(dersPuanlari));
     await prefs.setString('aktifDuzey', aktifDuzey);
+    await prefs.setInt('sepet', sepet);
+    await prefs.setStringList('korunanGunler', korunanGunler.toList());
+    if (sonSepet != null) await prefs.setString('sonSepet', sonSepet!);
   }
 
   // ---------------- Dersler ----------------
 
-  // YENİ: Paketteki sırayla her seviyenin kelimelerini 10'arlı derslere böler.
-  // Son parça 5'ten azsa ayrı ders yapmaz, bir önceki derse ekler.
+  // Dersleri paket.dart'taki ders planından kurar. Ders numarası seviye içindeki
+  // sırasıdır ve hiç değişmez; böylece kayıtlı kayısılar (ör. "A1-3") doğru derse ait kalır.
   void dersleriOlustur() {
     final harita = {for (final k in kelimeler) k.ing: k};
+    final sayac = <String, int>{}; // her seviyede kaçıncı ders
     dersler = [];
-    for (final duzey in ['A1', 'A2', 'B1']) {
-      final liste = [
-        for (final p in kelimePaketi)
-          if (p[2] == duzey && harita[p[0]] != null) harita[p[0]]!,
+    for (final (duzey, baslik, liste) in dersPlani) {
+      final no = (sayac[duzey] ?? 0) + 1;
+      sayac[duzey] = no;
+      // Silinmiş kelimeler atlanır; ders tamamen boşaldıysa gösterilmez
+      final dersKelimeleri = [
+        for (final ing in liste)
+          if (harita[ing] != null) harita[ing]!,
       ];
-      final basliklar = dersBasliklari[duzey] ?? [];
-      for (int i = 0; i < liste.length; i += 10) {
-        final parca = liste.sublist(i, min(i + 10, liste.length));
-        if (parca.length < 5 && dersler.isNotEmpty && dersler.last.duzey == duzey) {
-          dersler.last.kelimeler.addAll(parca);
-          continue;
-        }
-        final no = i ~/ 10 + 1;
-        final baslik = no <= basliklar.length ? basliklar[no - 1] : 'Ders $no';
-        dersler.add(Ders(duzey, no, baslik, parca));
-      }
+      if (dersKelimeleri.isEmpty) continue;
+      dersler.add(Ders(duzey, no, baslik, dersKelimeleri));
     }
   }
 
@@ -601,7 +634,7 @@ class _AnaSayfaState extends State<AnaSayfa> {
                 style: TextStyle(fontSize: 18, fontWeight: FontWeight.w900),
               ),
             ),
-            for (final d in ['A1', 'A2', 'B1'])
+            for (final d in seviyeler)
               ListTile(
                 onTap: () => Navigator.pop(context, d), // seçilen seviyeyi geri yolla
                 leading: CircleAvatar(
@@ -760,6 +793,110 @@ class _AnaSayfaState extends State<AnaSayfa> {
     }
     bugun++;
     gecmis[bugununTarihi()] = bugun;
+    // Bugünkü hedef tam şimdi dolduysa 7 günlük sepet kuralına bak
+    if (bugun == profil.hedef) sepetKazanmaKontrol();
+  }
+
+  // ---------------- Kayısı sepeti ----------------
+
+  // Bir gün "aktif" mi: ya çalışılmış ya da sepetle korunmuş
+  bool aktifGun(DateTime gun) {
+    final t = tarihMetni(gun);
+    return (gecmis[t] ?? 0) > 0 || korunanGunler.contains(t);
+  }
+
+  // YENİ: Son 7 günün hepsinde hedef tamamsa 1 sepet (en fazla 2)
+  void sepetKazanmaKontrol() {
+    if (sepet >= 2) return;
+    final simdi = DateTime.now();
+    for (int i = 0; i < 7; i++) {
+      final gun = tarihMetni(simdi.subtract(Duration(days: i)));
+      if ((gecmis[gun] ?? 0) < profil.hedef) return; // bir gün bile eksikse yok
+    }
+    // Aynı 7 günlük dilim için ikinci kez verilmesin
+    final yediGunOnce = tarihMetni(simdi.subtract(const Duration(days: 6)));
+    if (sonSepet != null && sonSepet!.compareTo(yediGunOnce) >= 0) return;
+    sepet++;
+    sonSepet = bugununTarihi();
+    // bildi() bir setState içinde çağrılıyor; mesajı ekran çizildikten sonra göster
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('7 gün üst üste hedef! Bir kayısı sepeti kazandın.'),
+        ),
+      );
+    });
+  }
+
+  // YENİ: Dünden geriye kaçırılan günleri sepetle kapatır, kaç sepet kullanıldığını döndürür.
+  // Sepet yetmiyorsa hiç harcanmaz (seri zaten bozulacak, boşa gitmesin).
+  int sepetleKoru() {
+    if (sepet == 0) return 0;
+    final kacirilan = <String>[];
+    var gun = DateTime.now().subtract(const Duration(days: 1)); // dünden başla
+    while (!aktifGun(gun) && kacirilan.length <= sepet) {
+      kacirilan.add(tarihMetni(gun));
+      gun = gun.subtract(const Duration(days: 1));
+    }
+    // Kaçırılan yoksa, sepet yetmiyorsa ya da öncesinde korunacak bir seri yoksa kullanma
+    if (kacirilan.isEmpty || kacirilan.length > sepet || !aktifGun(gun)) return 0;
+    korunanGunler.addAll(kacirilan);
+    sepet -= kacirilan.length;
+    return kacirilan.length;
+  }
+
+  // YENİ: Uzun aradan dönene nazik karşılama; sepet kullanıldıysa haber ver
+  Future<void> donusMesaji(int yokGun, int kullanilan) async {
+    if (!mounted) return;
+    if (yokGun >= 3) {
+      final dusur = await showDialog<bool>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('Tekrar hoş geldin!'),
+          content: Text(
+            '$yokGun gündür yoktun. Önemli olan geri dönmek, kaldığın yerden devam ediyoruz.'
+            '${kullanilan > 0 ? ' Kayısı sepetin serini korudu.' : ''}'
+            '${profil.sure > 5 ? '\n\nBiraz yavaşlayıp günde 5 dakikayla başlamak ister misin?' : ''}',
+          ),
+          actions: profil.sure > 5
+              ? [
+                  TextButton(
+                    onPressed: () => Navigator.pop(context, false),
+                    child: const Text('Böyle kalsın'),
+                  ),
+                  FilledButton(
+                    onPressed: () => Navigator.pop(context, true),
+                    child: const Text('5 dakikaya düşür'),
+                  ),
+                ]
+              : [
+                  FilledButton(
+                    onPressed: () => Navigator.pop(context, false),
+                    child: const Text('Hadi başlayalım'),
+                  ),
+                ],
+        ),
+      );
+      if (dusur == true && mounted) {
+        setState(() {
+          profil.sure = 5;
+          profil.hedef = gunlukDersSayisi(5) * 10;
+          planiYenile();
+        });
+        profiliKaydet();
+      }
+    } else if (kullanilan > 0) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            kullanilan == 1
+                ? 'Dün gelmedin ama kayısı sepetin serini korudu! Kalan sepet: $sepet'
+                : '$kullanilan gün gelmedin ama sepetlerin serini korudu! Kalan sepet: $sepet',
+          ),
+        ),
+      );
+    }
   }
 
   // Bilinmeyen kelime ham hâline döner
@@ -771,10 +908,11 @@ class _AnaSayfaState extends State<AnaSayfa> {
 
   // YENİ: Şimdiye kadarki en uzun seri
   int enUzunSeri() {
-    final gunler = gecmis.entries
-        .where((e) => e.value > 0)
-        .map((e) => DateTime.parse(e.key))
-        .toList()
+    // Çalışılan günler + sepetle korunan günler
+    final gunler = {
+      ...gecmis.entries.where((e) => e.value > 0).map((e) => e.key),
+      ...korunanGunler,
+    }.map(DateTime.parse).toList()
       ..sort();
     int enUzun = 0;
     int simdiki = 0;
@@ -822,6 +960,7 @@ class _AnaSayfaState extends State<AnaSayfa> {
       profil = yeni;
       seciliDuzeyler = duzeyler;
       tanitimTamam = true;
+      tanitimTekrar = false;
       sekme = 0; // tanıtımdan sonra hep ana sayfaya dön
       aktifDuzey = baslangic;
       aktif = kelimeSec();
@@ -864,8 +1003,11 @@ class _AnaSayfaState extends State<AnaSayfa> {
       ),
     );
     if (sonuc == null || !mounted) return; // geri tuşuyla çıkıldı
+    final hedefDegisti = sonuc.hedef != profil.hedef;
     setState(() {
       profil = sonuc;
+      // Hedef = tempo. Değiştiyse plan yeniden hesaplanır, önde/geride kıyası buradan başlar
+      if (hedefDegisti) planiYenile();
     });
     final prefs = SharedPreferencesAsync();
     await prefs.setString('profil', jsonEncode(profil.toJson()));
@@ -876,11 +1018,11 @@ class _AnaSayfaState extends State<AnaSayfa> {
   int seriHesapla() {
     var gun = DateTime.now();
     // Bugün henüz çalışmadıysan seri dünden sayılır, bozulmaz
-    if ((gecmis[tarihMetni(gun)] ?? 0) == 0) {
+    if (!aktifGun(gun)) {
       gun = gun.subtract(const Duration(days: 1));
     }
     int seri = 0;
-    while ((gecmis[tarihMetni(gun)] ?? 0) > 0) {
+    while (aktifGun(gun)) { // sepetle korunan günler de seriye dahil
       seri++;
       gun = gun.subtract(const Duration(days: 1));
     }
@@ -1043,7 +1185,7 @@ class _AnaSayfaState extends State<AnaSayfa> {
         seciliDuzeyler.remove(duzey);
         // Ana sayfadaki seviye kapandıysa açık kalanlardan birine geç
         if (duzey == aktifDuzey) {
-          aktifDuzey = ['A1', 'A2', 'B1'].firstWhere(
+          aktifDuzey = seviyeler.firstWhere(
             seciliDuzeyler.contains,
             orElse: () => 'A1',
           );
@@ -1247,6 +1389,27 @@ class _AnaSayfaState extends State<AnaSayfa> {
                 color: kSoluk,
               ),
             ),
+            const SizedBox(height: 6),
+            // YENİ: Kaç kayısı sepetin var
+            Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(
+                  Icons.shopping_basket_outlined,
+                  size: 16,
+                  color: sepet > 0 ? kTuruncu : const Color(0xFF5C554F),
+                ),
+                const SizedBox(width: 4),
+                Text(
+                  '$sepet',
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w900,
+                    color: sepet > 0 ? kTuruncu : const Color(0xFF5C554F),
+                  ),
+                ),
+              ],
+            ),
           ],
         ),
       ),
@@ -1262,6 +1425,7 @@ class _AnaSayfaState extends State<AnaSayfa> {
       children: List.generate(7, (i) {
         final gun = simdi.subtract(Duration(days: 6 - i));
         final calisti = (gecmis[tarihMetni(gun)] ?? 0) > 0;
+        final korundu = !calisti && korunanGunler.contains(tarihMetni(gun));
         final bugunMu = i == 6;
         return Padding(
           padding: const EdgeInsets.symmetric(horizontal: 5),
@@ -1274,13 +1438,15 @@ class _AnaSayfaState extends State<AnaSayfa> {
                   shape: BoxShape.circle,
                   color: calisti ? kTuruncu : Colors.transparent,
                   border: Border.all(
-                    color: calisti ? kTuruncu : (bugunMu ? kYazi : kCizgi),
+                    color: calisti || korundu ? kTuruncu : (bugunMu ? kYazi : kCizgi),
                     width: 2,
                   ),
                 ),
                 child: calisti
                     ? const Icon(Icons.check_rounded, size: 18, color: kZemin)
-                    : null,
+                    : (korundu
+                        ? const Icon(Icons.shopping_basket_outlined, size: 15, color: kTuruncu)
+                        : null),
               ),
               const SizedBox(height: 5),
               Text(
@@ -2150,11 +2316,11 @@ class _AnaSayfaState extends State<AnaSayfa> {
             // Yanlışlar: sığmazsa sadece bu kutu kayar
             if (turYanlislar.isNotEmpty)
               Expanded(
-                child: Container(
-                  decoration: BoxDecoration(
-                    color: kKart,
-                    borderRadius: BorderRadius.circular(20),
-                  ),
+                // Material: içindeki ListTile'lar için (Container uyarı verir)
+                child: Material(
+                  color: kKart,
+                  borderRadius: BorderRadius.circular(20),
+                  clipBehavior: Clip.antiAlias,
                   child: ListView(
                     padding: const EdgeInsets.symmetric(vertical: 8),
                     children: [
@@ -2341,7 +2507,7 @@ class _AnaSayfaState extends State<AnaSayfa> {
           duzSatir(
             ikon: Icons.route_outlined,
             ad: 'Programım',
-            deger: '${profil.sure} dk / gün',
+            deger: '${hedeftenDers(profil.hedef)} ders / gün',
             onTap: programiAc,
           ),
           duzSatir(
@@ -2377,7 +2543,10 @@ class _AnaSayfaState extends State<AnaSayfa> {
             ikon: Icons.replay_rounded,
             ad: 'Tanıtımı tekrar izle',
             // İlerleme silinmez; sadece seviye, süre ve hatırlatma yeniden seçilir
-            onTap: () => setState(() => tanitimTamam = false),
+            onTap: () => setState(() {
+              tanitimTamam = false;
+              tanitimTekrar = true;
+            }),
           ),
           duzSatir(
             ikon: Icons.info_outline_rounded,
@@ -2406,7 +2575,7 @@ class _AnaSayfaState extends State<AnaSayfa> {
 
   // Açık seviyeler kısa yazılır: "A1 · A2 · ★"
   String seviyeOzeti() {
-    final sira = ['A1', 'A2', 'B1', 'Benim'];
+    final sira = [...seviyeler, 'Benim'];
     return sira
         .where(seciliDuzeyler.contains)
         .map((d) => d == 'Benim' ? '★' : d)
@@ -2415,7 +2584,8 @@ class _AnaSayfaState extends State<AnaSayfa> {
 
   // Satırları kenardan kenara bir blokta toplar, aralarına ince çizgi koyar
   Widget satirGrubu(List<Widget> satirlar) {
-    return Container(
+    // Container değil Material: içindeki ListTile'ların dokunma efekti görünsün
+    return Material(
       color: kKart,
       child: Column(
         children: [
@@ -2463,22 +2633,37 @@ class _AnaSayfaState extends State<AnaSayfa> {
     );
   }
 
+  // Tempo değişince yeni planın bitişini "ilk plan" olarak kaydeder
+  void planiYenile() {
+    final yeni = planHesapla(kalanDersler(), hedeftenDers(profil.hedef));
+    if (yeni.isNotEmpty) profil.planBitis = tarihMetni(yeni.last.bitis);
+    if (profil.programBaslangic.isEmpty) profil.programBaslangic = bugununTarihi();
+  }
+
+  // Aktif seviyeden itibaren, henüz bitmemiş (kayısısı 0) dersleri sayar
+  Map<String, int> kalanDersler() => {
+        for (final d in seviyeler)
+          if (seviyeler.indexOf(d) >= seviyeler.indexOf(aktifDuzey))
+            d: dersler
+                .where((x) => x.duzey == d && (dersPuanlari[x.kimlik] ?? 0) == 0)
+                .length,
+      };
+
   // YENİ: Programım sayfası: güncel ilerlemeye göre yol haritası, süre değiştirilebilir
   void programiAc() {
+    // Tanıtımı eski sürümde geçenlerin programı yok: bugünü başlangıç kabul et
+    if (profil.programBaslangic.isEmpty) {
+      final plan = planHesapla(kalanDersler(), hedeftenDers(profil.hedef));
+      profil.programBaslangic = bugununTarihi();
+      if (plan.isNotEmpty) profil.planBitis = tarihMetni(plan.last.bitis);
+      profiliKaydet();
+    }
     Navigator.push(
       context,
       MaterialPageRoute(
         builder: (_) => StatefulBuilder(
           builder: (context, yenile) {
-            // Aktif seviyeden itibaren, henüz bitmemiş (kayısısı 0) dersleri say
-            final sira = ['A1', 'A2', 'B1'];
-            final kalan = {
-              for (final d in sira)
-                if (sira.indexOf(d) >= sira.indexOf(aktifDuzey))
-                  d: dersler
-                      .where((x) => x.duzey == d && (dersPuanlari[x.kimlik] ?? 0) == 0)
-                      .length,
-            };
+            final plan = planHesapla(kalanDersler(), hedeftenDers(profil.hedef));
             final liste = gorunenDersler;
             final siradaki = liste.isEmpty ? null : liste[siradakiDers()];
             final saat = '${profil.saat.toString().padLeft(2, '0')}:'
@@ -2504,12 +2689,14 @@ class _AnaSayfaState extends State<AnaSayfa> {
                       for (final dk in [5, 10, 15, 30])
                         ChoiceChip(
                           label: Text('$dk dk'),
-                          selected: profil.sure == dk,
+                          // Seçili: hedef bu sürenin ders sayısına denk geliyorsa
+                          selected: profil.hedef == gunlukDersSayisi(dk) * 10,
                           onSelected: (_) {
                             // Süre değişince günlük hedef de programa göre değişir
                             setState(() {
                               profil.sure = dk;
                               profil.hedef = gunlukDersSayisi(dk) * 10;
+                              planiYenile(); // tempo değişti: kıyas buradan başlar
                             });
                             yenile(() {});
                             profiliKaydet();
@@ -2521,7 +2708,12 @@ class _AnaSayfaState extends State<AnaSayfa> {
                   ProgramGorunumu(
                     dakika: profil.sure,
                     hedef: profil.hedef,
-                    plan: planHesapla(kalan, gunlukDersSayisi(profil.sure)),
+                    plan: plan,
+                    programBaslangic: profil.programBaslangic.isEmpty
+                        ? null
+                        : DateTime.parse(profil.programBaslangic),
+                    ilkBitis:
+                        profil.planBitis.isEmpty ? null : DateTime.parse(profil.planBitis),
                     baslangic: siradaki == null
                         ? 'Bütün dersler bitti!'
                         : 'Sıradaki: ${siradaki.duzey} · Ders ${siradaki.no} · ${siradaki.baslik}',
@@ -2670,6 +2862,9 @@ class _AnaSayfaState extends State<AnaSayfa> {
       gecmis.clear();
       dersPuanlari.clear();
       bugun = 0;
+      sepet = 0;
+      korunanGunler.clear();
+      sonSepet = null;
       aktif = kelimeSec();
       onYuz = true;
       kaydiriciyiKur();
@@ -2678,6 +2873,7 @@ class _AnaSayfaState extends State<AnaSayfa> {
     // Çok eski sürümden kalan bugün sayacı geri gelmesin
     await prefs.remove('tarih');
     await prefs.remove('bugun');
+    await prefs.remove('sonSepet');
     await kelimeleriKaydet();
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
@@ -2726,6 +2922,44 @@ class _AnaSayfaState extends State<AnaSayfa> {
           ozetKutusu('EN UZUN', '${enUzunSeri()} gün', const Color(0xFF7C9CFF)),
           const SizedBox(width: 10),
           ozetKutusu('BUGÜN', '$bugun kelime', const Color(0xFF4CC37A)),
+        ],
+      ),
+    );
+  }
+
+  // YENİ: Kayısı sepeti açıklaması ve sayısı
+  Widget sepetKutusu() {
+    return kutu(
+      child: Row(
+        children: [
+          // İki sepet yeri: dolu olanlar turuncu
+          for (int i = 0; i < 2; i++)
+            Padding(
+              padding: const EdgeInsets.only(right: 6),
+              child: Icon(
+                Icons.shopping_basket_rounded,
+                size: 30,
+                color: i < sepet ? kTuruncu : kCizgi,
+              ),
+            ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Kayısı sepeti: $sepet / 2',
+                  style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 16),
+                ),
+                const SizedBox(height: 2),
+                const Text(
+                  '7 gün üst üste hedefini tamamla, 1 sepet kazan. '
+                  'Bir günü kaçırırsan sepet serini korur.',
+                  style: TextStyle(fontSize: 13, color: kSoluk, height: 1.3),
+                ),
+              ],
+            ),
+          ),
         ],
       ),
     );
@@ -2827,6 +3061,7 @@ class _AnaSayfaState extends State<AnaSayfa> {
                     final tarih = baslangic.add(Duration(days: hafta * 7 + gun));
                     final gelecek = tarih.isAfter(bugunTarih);
                     final sayi = gecmis[tarihMetni(tarih)] ?? 0;
+                    final korundu = sayi == 0 && korunanGunler.contains(tarihMetni(tarih));
                     return Container(
                       width: 18,
                       height: 18,
@@ -2834,6 +3069,8 @@ class _AnaSayfaState extends State<AnaSayfa> {
                       decoration: BoxDecoration(
                         color: gelecek ? Colors.transparent : takvimRengi(sayi),
                         borderRadius: BorderRadius.circular(4),
+                        // Sepetle korunan gün: turuncu çerçeve
+                        border: korundu ? Border.all(color: kTuruncu, width: 1.5) : null,
                       ),
                     );
                   }),
@@ -2991,6 +3228,7 @@ class _AnaSayfaState extends State<AnaSayfa> {
       padding: const EdgeInsets.only(top: 4, bottom: 24),
       children: [
         seriKutusu(),
+        sepetKutusu(),
         takvim(),
         kurutmaKutusu(),
         Padding(
@@ -3091,7 +3329,17 @@ class _AnaSayfaState extends State<AnaSayfa> {
     }
     // YENİ: İlk açılışta önce tanıtım
     if (!tanitimTamam) {
-      return TanitimSayfasi(profil: profil.kopya(), onBitti: tanitimBitti);
+      return TanitimSayfasi(
+        profil: profil.kopya(),
+        onBitti: tanitimBitti,
+        // Tekrar izleniyorsa ✕ ile hiçbir şey değiştirmeden Profil'e dön
+        onKapat: tanitimTekrar
+            ? () => setState(() {
+                  tanitimTamam = true;
+                  tanitimTekrar = false;
+                })
+            : null,
+      );
     }
     // Sekmeler: 0 ana sayfa, 1 pratik, 2 hasat, 3 profil
     final ekranlar = [
@@ -3187,6 +3435,8 @@ class Profil {
   String amac; // YENİ: neden öğreniyor (okul, is, seyahat, dizi, kendim)
   int sure; // YENİ: günde kaç dakika ayırabilir (5, 10, 15, 30)
   String zaman; // YENİ: ne zaman çalışmayı sever (sabah, ogle, aksam, gece)
+  String programBaslangic; // YENİ: programa başlanan gün (yyyy-aa-gg), boşsa henüz yok
+  String planBitis; // YENİ: plan yapıldığı gün hesaplanan bitiş; önde/geride kıyası için
 
   Profil({
     this.ad = '',
@@ -3198,6 +3448,8 @@ class Profil {
     this.amac = '',
     this.sure = 10,
     this.zaman = 'aksam',
+    this.programBaslangic = '',
+    this.planBitis = '',
   });
 
   // Hesabım sayfası bir kopya üzerinde çalışır; Kaydet'e basılmazsa asıl profil değişmez
@@ -3211,6 +3463,8 @@ class Profil {
         amac: amac,
         sure: sure,
         zaman: zaman,
+        programBaslangic: programBaslangic,
+        planBitis: planBitis,
       );
 
   Map<String, dynamic> toJson() => {
@@ -3223,6 +3477,8 @@ class Profil {
         'amac': amac,
         'sure': sure,
         'zaman': zaman,
+        'programBaslangic': programBaslangic,
+        'planBitis': planBitis,
       };
 
   // Eski kayıtlarda yeni alanlar yok: ?? ile varsayılan değer veriyoruz (migration)
@@ -3236,6 +3492,8 @@ class Profil {
         amac: j['amac'] ?? '',
         sure: j['sure'] ?? 10,
         zaman: j['zaman'] ?? 'aksam',
+        programBaslangic: j['programBaslangic'] ?? '',
+        planBitis: j['planBitis'] ?? '',
       );
 }
 
@@ -3250,6 +3508,9 @@ int gunlukDersSayisi(int dakika) => switch (dakika) {
       <= 15 => 3,
       _ => 5,
     };
+
+// YENİ: Programın tek kaynağı günlük hedef: 10 kelime = 1 ders (en az 1)
+int hedeftenDers(int hedef) => max(1, (hedef / 10).ceil());
 
 // Sevilen zamana göre hatırlatma saati: (saat, dakika)
 (int, int) hatirlatmaSaati(String zaman) => switch (zaman) {
@@ -3279,24 +3540,37 @@ const aylar = [
   'Ocak', 'Şubat', 'Mart', 'Nisan', 'Mayıs', 'Haziran',
   'Temmuz', 'Ağustos', 'Eylül', 'Ekim', 'Kasım', 'Aralık',
 ];
-String tarihYazisi(DateTime d) => '${d.day} ${aylar[d.month - 1]}';
+// "8 Aralık"; yıl bu yıldan farklıysa ya da istenirse "8 Aralık 2027"
+String tarihYazisi(DateTime d, {bool yilli = false}) {
+  final yil = yilli || d.year != DateTime.now().year ? ' ${d.year}' : '';
+  return '${d.day} ${aylar[d.month - 1]}$yil';
+}
 
-// Yol haritası: her seviye için (seviye, ders sayısı, gün, bitiş tarihi).
-// gün = kalan ders ÷ günlük ders (yukarı yuvarlanır); tarihler art arda eklenir.
-List<(String, int, int, DateTime)> planHesapla(
-  Map<String, int> kalanDers,
-  int gunlukDers,
-) {
-  final bugun = DateTime.now();
-  var toplamGun = 0;
-  final plan = <(String, int, int, DateTime)>[];
-  for (final duzey in ['A1', 'A2', 'B1']) {
+// Saatleri atıp sadece günü bırakır (gün farkı hesaplarken saat karışmasın)
+DateTime sadeceGun(DateTime d) => DateTime(d.year, d.month, d.day);
+
+// Yol haritasının bir adımı. İsimli alanlı record: a.duzey, a.bitis diye okunur.
+typedef PlanAdimi = ({
+  String duzey,
+  int ders,
+  int gun,
+  DateTime baslangic,
+  DateTime bitis,
+});
+
+// Yol haritası: her seviye için başlangıç ve bitiş tarihi.
+// gün = kalan ders ÷ günlük ders (yukarı yuvarlanır); seviyeler art arda gelir.
+List<PlanAdimi> planHesapla(Map<String, int> kalanDers, int gunlukDers) {
+  var tarih = sadeceGun(DateTime.now()); // sıradaki seviyenin ilk günü
+  final plan = <PlanAdimi>[];
+  for (final duzey in seviyeler) {
     final ders = kalanDers[duzey] ?? 0;
     if (ders == 0) continue;
     final gun = (ders / gunlukDers).ceil();
-    toplamGun += gun;
-    // Bugün de bir gün sayılır, o yüzden -1
-    plan.add((duzey, ders, gun, bugun.add(Duration(days: toplamGun - 1))));
+    // Başladığı gün de sayılır, o yüzden bitiş = başlangıç + gün - 1
+    final bitis = tarih.add(Duration(days: gun - 1));
+    plan.add((duzey: duzey, ders: ders, gun: gun, baslangic: tarih, bitis: bitis));
+    tarih = bitis.add(const Duration(days: 1)); // sonraki seviye ertesi gün başlar
   }
   return plan;
 }
@@ -3305,7 +3579,9 @@ List<(String, int, int, DateTime)> planHesapla(
 class ProgramGorunumu extends StatelessWidget {
   final int dakika;
   final int hedef;
-  final List<(String, int, int, DateTime)> plan;
+  final List<PlanAdimi> plan;
+  final DateTime? programBaslangic; // programa başlanan gün (yoksa bugün)
+  final DateTime? ilkBitis; // ilk planlanan bitiş; varsa önde/geride gösterilir
   final String baslangic; // "A1 · Ders 1 · Yiyecek ve içecek"
   final String? hatirlatma; // "Her akşam 20:00" ya da null (kapalı)
   final String amac;
@@ -3315,12 +3591,26 @@ class ProgramGorunumu extends StatelessWidget {
     required this.dakika,
     required this.hedef,
     required this.plan,
+    this.programBaslangic,
+    this.ilkBitis,
     required this.baslangic,
     required this.hatirlatma,
     required this.amac,
   });
 
-  static const seviyeAdlari = {'A1': 'Başlangıç', 'A2': 'Temel', 'B1': 'Orta'};
+  static const seviyeAdlari = {
+    'A1': 'Başlangıç',
+    'A2': 'Temel',
+    'B1': 'Orta',
+    'B2': 'Orta üstü',
+  };
+
+  static const baslikStili = TextStyle(
+    fontSize: 13,
+    fontWeight: FontWeight.w800,
+    letterSpacing: 1.4,
+    color: Color(0xFF7E766E),
+  );
 
   Widget bilgiSatiri(IconData ikon, String baslik, String metin) {
     return Padding(
@@ -3351,9 +3641,74 @@ class ProgramGorunumu extends StatelessWidget {
     );
   }
 
+  // Başlangıç / bitiş kutusu
+  Widget tarihKutusu(String baslik, DateTime tarih, IconData ikon) {
+    return Expanded(
+      child: Container(
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: kKart,
+          borderRadius: BorderRadius.circular(18),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(ikon, size: 16, color: kSoluk),
+                const SizedBox(width: 6),
+                Text(baslik, style: baslikStili.copyWith(fontSize: 12)),
+              ],
+            ),
+            const SizedBox(height: 6),
+            Text(
+              tarihYazisi(tarih, yilli: true),
+              style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w900),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // İlk plana göre önde mi geride mi? (gün farkı: eksi = önde, artı = geride)
+  Widget durumSatiri(int fark) {
+    final (Color renk, IconData ikon, String metin) = fark < 0
+        ? (const Color(0xFF4CC37A), Icons.trending_up_rounded, 'Planından ${-fark} gün öndesin!')
+        : fark > 0
+            ? (const Color(0xFFE8674A), Icons.schedule_rounded,
+                'Planından $fark gün geridesin. Sorun değil, devam!')
+            : (kTuruncu, Icons.check_circle_outline_rounded, 'Tam planındasın!');
+    return Container(
+      margin: const EdgeInsets.only(top: 10),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      decoration: BoxDecoration(
+        color: renk.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: Row(
+        children: [
+          Icon(ikon, color: renk),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              metin,
+              style: TextStyle(color: renk, fontWeight: FontWeight.w800),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
-    final dersSayisi = gunlukDersSayisi(dakika);
+    final dersSayisi = hedeftenDers(hedef);
+    // Seçilen süre bu ders sayısına uyuyorsa onu göster, uymuyorsa ders başı ~5 dk say
+    final sure = gunlukDersSayisi(dakika) == dersSayisi ? dakika : dersSayisi * 5;
+    final bugun = sadeceGun(DateTime.now());
+    final bas = programBaslangic ?? bugun;
+    final bit = plan.isEmpty ? null : plan.last.bitis;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -3370,7 +3725,7 @@ class ProgramGorunumu extends StatelessWidget {
               Column(
                 children: [
                   Text(
-                    '$dakika',
+                    '$sure',
                     style: const TextStyle(
                       fontSize: 44,
                       fontWeight: FontWeight.w900,
@@ -3404,18 +3759,30 @@ class ProgramGorunumu extends StatelessWidget {
             ],
           ),
         ),
-        const SizedBox(height: 22),
-        const Text(
-          'YOL HARİTAN',
-          style: TextStyle(
-            fontSize: 13,
-            fontWeight: FontWeight.w800,
-            letterSpacing: 1.4,
-            color: Color(0xFF7E766E),
+        const SizedBox(height: 14),
+        // YENİ: Başlangıç ve hedef bitiş, yıllarıyla
+        if (bit != null)
+          Row(
+            children: [
+              tarihKutusu('BAŞLANGIÇ', bas, Icons.play_arrow_rounded),
+              const SizedBox(width: 10),
+              tarihKutusu('HEDEF BİTİŞ', bit, Icons.flag_rounded),
+            ],
           ),
-        ),
+        if (bit != null && ilkBitis != null)
+          durumSatiri(sadeceGun(bit).difference(sadeceGun(ilkBitis!)).inDays),
+        const SizedBox(height: 22),
+        const Text('YOL HARİTAN', style: baslikStili),
         const SizedBox(height: 10),
-        // Zaman çizelgesi: solda nokta ve çizgi, sağda bitiş tarihi
+        if (plan.isEmpty)
+          const Padding(
+            padding: EdgeInsets.only(bottom: 18),
+            child: Text(
+              'Bütün dersleri bitirdin, tebrikler!',
+              style: TextStyle(fontWeight: FontWeight.w800),
+            ),
+          ),
+        // Zaman çizelgesi: solda nokta ve çizgi, ortada tarih aralığı, sağda gün sayısı
         for (int i = 0; i < plan.length; i++)
           IntrinsicHeight(
             child: Row(
@@ -3448,11 +3815,19 @@ class ProgramGorunumu extends StatelessWidget {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
-                          '${plan[i].$1} · ${seviyeAdlari[plan[i].$1]}',
+                          '${plan[i].duzey} · ${seviyeAdlari[plan[i].duzey]}',
                           style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w900),
                         ),
+                        const SizedBox(height: 2),
                         Text(
-                          '${plan[i].$2} ders · yaklaşık ${plan[i].$3} gün',
+                          '${tarihYazisi(plan[i].baslangic)} → ${tarihYazisi(plan[i].bitis)}',
+                          style: const TextStyle(
+                            color: kTuruncu,
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+                        Text(
+                          '${plan[i].ders} ders',
                           style: const TextStyle(color: kSoluk, fontWeight: FontWeight.w600),
                         ),
                       ],
@@ -3460,10 +3835,10 @@ class ProgramGorunumu extends StatelessWidget {
                   ),
                 ),
                 Text(
-                  tarihYazisi(plan[i].$4),
+                  '${plan[i].gun} gün',
                   style: const TextStyle(
                     fontWeight: FontWeight.w900,
-                    color: kTuruncu,
+                    color: kSoluk,
                     fontSize: 15,
                   ),
                 ),
@@ -3841,14 +4216,21 @@ class _HesapSayfasiState extends State<HesapSayfasi> {
 
 // ======================= Tanıtım (ilk açılış) =======================
 
-// YENİ: 5 sayfalık karşılama. Sağa kaydırarak ya da Devam ile ilerlenir.
+// Karşılama ve kişiye özel program: her sayfada bir soru, Devam ile ilerlenir.
 class TanitimSayfasi extends StatefulWidget {
   final Profil profil;
   // Bitince: profil, açık seviyeler, ana sayfada başlanacak seviye, ilk ders hemen açılsın mı
   final void Function(Profil profil, Set<String> duzeyler, String baslangic, bool dersAc)
       onBitti;
+  // YENİ: Tanıtım tekrar izleniyorsa çıkış; ilk açılışta null (çıkış yok, sorular cevaplanmalı)
+  final VoidCallback? onKapat;
 
-  const TanitimSayfasi({super.key, required this.profil, required this.onBitti});
+  const TanitimSayfasi({
+    super.key,
+    required this.profil,
+    required this.onBitti,
+    this.onKapat,
+  });
 
   @override
   State<TanitimSayfasi> createState() => _TanitimSayfasiState();
@@ -3891,6 +4273,7 @@ class _TanitimSayfasiState extends State<TanitimSayfasi> {
   (Set<String>, String) seviyeAyari() => switch (seviye) {
         'biraz' => (<String>{'A1', 'A2', 'Benim'}, 'A2'),
         'orta' => (<String>{'A2', 'B1', 'Benim'}, 'B1'),
+        'ileri' => (<String>{'B1', 'B2', 'Benim'}, 'B2'),
         _ => (<String>{'A1', 'Benim'}, 'A1'),
       };
 
@@ -3933,6 +4316,10 @@ class _TanitimSayfasiState extends State<TanitimSayfasi> {
     final (saat, dakika) = hatirlatmaSaati(p.zaman);
     p.saat = saat;
     p.dakika = dakika;
+    // Program bugün başlıyor; ilk planlanan bitiş önde/geride kıyası için saklanır
+    final hesap = plan();
+    p.programBaslangic = bugununTarihi();
+    p.planBitis = hesap.isEmpty ? '' : tarihMetni(hesap.last.bitis);
     final (duzeyler, baslangic) = seviyeAyari();
     widget.onBitti(p, duzeyler, baslangic, dersAc);
   }
@@ -4014,15 +4401,15 @@ class _TanitimSayfasiState extends State<TanitimSayfasi> {
 
   Widget ikon(IconData i) => Icon(i, color: kTuruncu, size: 30);
 
-  // Seviye için sinyal çubukları: dolu çubuk sayısı = seviye
+  // Seviye için 4 sinyal çubuğu: dolu çubuk sayısı = seviye
   Widget sinyal(int dolu) {
     return Row(
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.end,
-      children: List.generate(3, (i) {
+      children: List.generate(4, (i) {
         return Container(
-          width: 8,
-          height: 10.0 + i * 8,
+          width: 7,
+          height: 8.0 + i * 7,
           margin: const EdgeInsets.symmetric(horizontal: 2),
           decoration: BoxDecoration(
             color: i < dolu ? kTuruncu : kCizgi,
@@ -4111,6 +4498,7 @@ class _TanitimSayfasiState extends State<TanitimSayfasi> {
       s('yeni', 1, 'Yeni başlıyorum', 'A1 · en temel kelimeler'),
       s('biraz', 2, 'Biraz biliyorum', 'A2 · günlük hayat'),
       s('orta', 3, 'Orta seviyeyim', 'B1 · iş, eğitim, fikirler'),
+      s('ileri', 4, 'İyi anlıyorum', 'B2 · haberler, tartışmalar, iş dünyası'),
     ]);
   }
 
@@ -4218,20 +4606,26 @@ class _TanitimSayfasiState extends State<TanitimSayfasi> {
     ]);
   }
 
+  // Seçimlere göre plan. Yeni kullanıcı: başlangıç seviyesinden itibaren bütün dersler.
+  // Başlangıçtan önceki seviyeler plana girmez (ör. A2'den başlayana A1 gösterilmez).
+  List<PlanAdimi> plan() {
+    final (_, baslangic) = seviyeAyari();
+    final kalan = {
+      for (final d in seviyeler)
+        if (seviyeler.indexOf(d) >= seviyeler.indexOf(baslangic))
+          d: dersBasliklari(d).length,
+    };
+    return planHesapla(kalan, gunlukDersSayisi(sure ?? 10));
+  }
+
   // 6) Sana özel program
   Widget programSayfasi() {
     final dk = sure ?? 10;
     final (_, baslangic) = seviyeAyari();
-    // Yeni kullanıcı: her seviyenin bütün dersleri kalan ders sayılır
-    final kalan = {
-      for (final d in ['A1', 'A2', 'B1'])
-        // başlangıçtan önceki seviyeler plana girmez (ör. A2'den başlayana A1 gösterilmez)
-        if (['A1', 'A2', 'B1'].indexOf(d) >= ['A1', 'A2', 'B1'].indexOf(baslangic))
-          d: dersBasliklari[d]?.length ?? 0,
-    };
-    final plan = planHesapla(kalan, gunlukDersSayisi(dk));
+    final plan = this.plan();
     final (saat, dakika) = hatirlatmaSaati(zaman ?? 'aksam');
-    final ilkBaslik = dersBasliklari[baslangic]?.first ?? '';
+    final basliklar = dersBasliklari(baslangic);
+    final ilkBaslik = basliklar.isEmpty ? '' : basliklar.first;
     final ad = adKutusu.text.trim();
     return soruSayfasi(
       ad.isEmpty ? 'Sana özel programın hazır!' : 'Programın hazır, $ad!',
@@ -4255,16 +4649,43 @@ class _TanitimSayfasiState extends State<TanitimSayfasi> {
   @override
   Widget build(BuildContext context) {
     final sonSayfa = sayfa == sayfaSayisi - 1;
+    // Telefonun geri tuşu: önceki soruya dön; ilk sayfadaysa (tekrar izlerken) çık
+    return PopScope(
+      // İlk açılışta hoş geldin sayfasındaysa geri tuşu uygulamadan normal çıksın
+      canPop: sayfa == 0 && widget.onKapat == null,
+      onPopInvokedWithResult: (cikildi, _) {
+        if (cikildi) return;
+        if (sayfa > 0) {
+          geri();
+        } else {
+          widget.onKapat?.call();
+        }
+      },
+      child: tanitimEkrani(sonSayfa),
+    );
+  }
+
+  Widget tanitimEkrani(bool sonSayfa) {
     return Scaffold(
       backgroundColor: kZemin,
       body: SafeArea(
         child: Column(
           children: [
-            // Üst çubuk: geri oku ve ilerleme (hoş geldin sayfasında yok)
+            // Üst çubuk: geri oku ve ilerleme. Hoş geldin sayfasında sadece
+            // tekrar izlerken çıkış (✕) butonu var.
             SizedBox(
               height: 56,
               child: sayfa == 0
-                  ? null
+                  ? (widget.onKapat == null
+                      ? null
+                      : Align(
+                          alignment: Alignment.centerLeft,
+                          child: IconButton(
+                            tooltip: 'Tanıtımdan çık',
+                            onPressed: widget.onKapat,
+                            icon: const Icon(Icons.close_rounded, color: kSoluk, size: 28),
+                          ),
+                        ))
                   : Row(
                       children: [
                         IconButton(
