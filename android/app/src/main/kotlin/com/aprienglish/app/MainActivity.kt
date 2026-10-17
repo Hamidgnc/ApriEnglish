@@ -1,4 +1,4 @@
-package com.example.kelime_kartlari
+package com.aprienglish.app
 
 import io.flutter.embedding.android.FlutterActivity
 
