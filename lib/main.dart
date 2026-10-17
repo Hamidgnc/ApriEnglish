@@ -1,6 +1,8 @@
 import 'dart:convert';
 import 'dart:math';
+import 'package:audioplayers/audioplayers.dart'; // YENİ: ses efektleri
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart'; // YENİ: titreşim (HapticFeedback)
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:flutter_tts/flutter_tts.dart';
 import 'package:http/http.dart' as http; // YENİ: internete mesaj göndermek için
@@ -26,6 +28,70 @@ const seviyeler = ['A1', 'A2', 'B1', 'B2'];
 List<String> dersBasliklari(String duzey) =>
     [for (final d in dersPlani) if (d.$1 == duzey) d.$2];
 
+// YENİ: Ses ve titreşim. Her ekrandan Efekt.dogru() gibi çağrılır;
+// açık/kapalı ayarı profilden gelir (Profil > Ses efektleri / Titreşim).
+class Efekt {
+  static bool ses = true;
+  static bool titresim = true;
+  // Her ses için ayrı, önceden yüklenmiş bir oynatıcı: basınca beklemeden çalar
+  static final Map<String, AudioPlayer> _oynaticilar = {};
+
+  // Uygulama açılırken bir kez çağrılır (main içinde)
+  static Future<void> hazirla() async {
+    try {
+      // Efekt sesi başka sesleri (ör. kelime okuma) kesmesin, onlarla karışsın
+      await AudioPlayer.global.setAudioContext(
+        AudioContextConfig(focus: AudioContextConfigFocus.mixWithOthers).build(),
+      );
+    } catch (_) {}
+    for (final ad in ['dogru', 'yanlis', 'tamam']) {
+      try {
+        final oynatici = AudioPlayer();
+        // Düşük gecikme modu: kısa efektler için yapılmış hızlı oynatıcı (Android SoundPool)
+        await oynatici.setPlayerMode(PlayerMode.lowLatency);
+        await oynatici.setReleaseMode(ReleaseMode.stop); // bitince silinmesin, tekrar çalınsın
+        await oynatici.setSource(AssetSource('sesler/$ad.wav')); // şimdiden belleğe yükle
+        _oynaticilar[ad] = oynatici;
+      } catch (_) {
+        // Ses yüklenemezse uygulama çökmesin; o ses sessizce atlanır
+      }
+    }
+  }
+
+  static Future<void> _cal(String ad) async {
+    if (!ses) return;
+    final oynatici = _oynaticilar[ad];
+    if (oynatici == null) return;
+    try {
+      await oynatici.stop(); // hâlâ çalıyorsa başa sar
+      await oynatici.resume();
+    } catch (_) {}
+  }
+
+  // Not: lightImpact/heavyImpact gibi ince türler bazı telefonlarda (ör. Samsung)
+  // hiç hissedilmiyor. vibrate() her Android telefonda çalışıyor.
+  static void titret() {
+    if (titresim) HapticFeedback.vibrate();
+  }
+
+  static void dogru() {
+    titret(); // tek kısa titreşim
+    _cal('dogru');
+  }
+
+  static void yanlis() {
+    titret();
+    // Yanlışta iki kez: "bzz-bzz", doğrudan ayırt edilsin
+    Future.delayed(const Duration(milliseconds: 120), titret);
+    _cal('yanlis');
+  }
+
+  static void tamam() {
+    titret();
+    _cal('tamam');
+  }
+}
+
 // YENİ: Telefonun bildirim sistemi
 final FlutterLocalNotificationsPlugin bildirimler = FlutterLocalNotificationsPlugin();
 
@@ -38,6 +104,7 @@ Future<void> main() async {
       android: AndroidInitializationSettings('@mipmap/ic_launcher'),
     ),
   );
+  Efekt.hazirla(); // sesleri arka planda belleğe yükle (await yok: açılışı bekletmesin)
   runApp(const KelimeUygulamasi());
 }
 
@@ -512,6 +579,8 @@ class _AnaSayfaState extends State<AnaSayfa> {
     final profilMetni = await prefs.getString('profil');
     if (profilMetni != null) {
       profil = Profil.fromJson(jsonDecode(profilMetni));
+      Efekt.ses = profil.ses;
+      Efekt.titresim = profil.titresim;
     }
     final duzeyMetni = await prefs.getString('duzeyler');
     if (duzeyMetni != null) {
@@ -960,6 +1029,8 @@ class _AnaSayfaState extends State<AnaSayfa> {
   ) async {
     setState(() {
       profil = yeni;
+      Efekt.ses = profil.ses;
+      Efekt.titresim = profil.titresim;
       seciliDuzeyler = duzeyler;
       tanitimTamam = true;
       tanitimTekrar = false;
@@ -1116,6 +1187,11 @@ class _AnaSayfaState extends State<AnaSayfa> {
         turYanlislar.add(soru);
       }
     });
+    if (dogru) {
+      Efekt.dogru();
+    } else {
+      Efekt.yanlis();
+    }
     kelimeleriKaydet();
   }
 
@@ -1145,6 +1221,7 @@ class _AnaSayfaState extends State<AnaSayfa> {
       setState(() {
         testDurumu = 'sonuc';
       });
+      Efekt.tamam(); // tur bitti
       return;
     }
     setState(() {
@@ -2532,6 +2609,30 @@ class _AnaSayfaState extends State<AnaSayfa> {
           ),
         ]),
         const SizedBox(height: 18),
+        // YENİ: Ses ve titreşim ayrı ayrı açılıp kapanır
+        satirGrubu([
+          anahtarSatiri(
+            ikon: Icons.volume_up_outlined,
+            ad: 'Ses efektleri',
+            deger: profil.ses,
+            onChanged: (acik) {
+              setState(() => profil.ses = Efekt.ses = acik);
+              profiliKaydet();
+              if (acik) Efekt.dogru(); // açınca nasıl olduğunu duyur
+            },
+          ),
+          anahtarSatiri(
+            ikon: Icons.vibration_rounded,
+            ad: 'Titreşim',
+            deger: profil.titresim,
+            onChanged: (acik) {
+              setState(() => profil.titresim = Efekt.titresim = acik);
+              profiliKaydet();
+              if (acik) Efekt.titret(); // açınca bir kez titret
+            },
+          ),
+        ]),
+        const SizedBox(height: 18),
         satirGrubu([
           duzSatir(
             ikon: Icons.chat_bubble_outline_rounded,
@@ -2596,6 +2697,25 @@ class _AnaSayfaState extends State<AnaSayfa> {
             satirlar[i],
           ],
         ],
+      ),
+    );
+  }
+
+  // YENİ: Aç/kapa anahtarlı satır (ses, titreşim)
+  Widget anahtarSatiri({
+    required IconData ikon,
+    required String ad,
+    required bool deger,
+    required ValueChanged<bool> onChanged,
+  }) {
+    return SwitchListTile(
+      value: deger,
+      onChanged: onChanged,
+      contentPadding: const EdgeInsets.only(left: 20, right: 12),
+      secondary: Icon(ikon, color: kSoluk, size: 26),
+      title: Text(
+        ad,
+        style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w600),
       ),
     );
   }
@@ -3515,6 +3635,8 @@ class Profil {
   String zaman; // YENİ: ne zaman çalışmayı sever (sabah, ogle, aksam, gece)
   String programBaslangic; // YENİ: programa başlanan gün (yyyy-aa-gg), boşsa henüz yok
   String planBitis; // YENİ: plan yapıldığı gün hesaplanan bitiş; önde/geride kıyası için
+  bool ses; // YENİ: ses efektleri açık mı
+  bool titresim; // YENİ: titreşim açık mı
 
   Profil({
     this.ad = '',
@@ -3528,6 +3650,8 @@ class Profil {
     this.zaman = 'aksam',
     this.programBaslangic = '',
     this.planBitis = '',
+    this.ses = true,
+    this.titresim = true,
   });
 
   // Hesabım sayfası bir kopya üzerinde çalışır; Kaydet'e basılmazsa asıl profil değişmez
@@ -3543,6 +3667,8 @@ class Profil {
         zaman: zaman,
         programBaslangic: programBaslangic,
         planBitis: planBitis,
+        ses: ses,
+        titresim: titresim,
       );
 
   Map<String, dynamic> toJson() => {
@@ -3557,6 +3683,8 @@ class Profil {
         'zaman': zaman,
         'programBaslangic': programBaslangic,
         'planBitis': planBitis,
+        'ses': ses,
+        'titresim': titresim,
       };
 
   // Eski kayıtlarda yeni alanlar yok: ?? ile varsayılan değer veriyoruz (migration)
@@ -3572,6 +3700,8 @@ class Profil {
         zaman: j['zaman'] ?? 'aksam',
         programBaslangic: j['programBaslangic'] ?? '',
         planBitis: j['planBitis'] ?? '',
+        ses: j['ses'] ?? true,
+        titresim: j['titresim'] ?? true,
       );
 }
 
@@ -5012,6 +5142,7 @@ class _DersSayfasiState extends State<DersSayfasi> {
       setState(() {
         bitti = true;
       });
+      Efekt.tamam(); // ders bitti
       return;
     }
     setState(() {
@@ -5026,6 +5157,11 @@ class _DersSayfasiState extends State<DersSayfasi> {
     setState(() {
       secilen = sik;
     });
+    if (sik == adim.kelimeler.first.anlam) {
+      Efekt.dogru();
+    } else {
+      Efekt.yanlis();
+    }
   }
 
   void sikSec(String sik) {
@@ -5035,6 +5171,11 @@ class _DersSayfasiState extends State<DersSayfasi> {
       secilen = sik;
       if (sik != k.anlam) yanlislar.add(k);
     });
+    if (sik == k.anlam) {
+      Efekt.dogru();
+    } else {
+      Efekt.yanlis();
+    }
   }
 
   void solSec(Kelime k) {
@@ -5065,8 +5206,10 @@ class _DersSayfasiState extends State<DersSayfasi> {
         seciliSol = null;
         seciliSag = null;
       });
+      Efekt.dogru();
       return;
     }
+    Efekt.yanlis();
     yanlislar.add(a);
     setState(() {
       hataSol = a;
