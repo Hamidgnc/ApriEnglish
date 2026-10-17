@@ -438,6 +438,8 @@ class _AnaSayfaState extends State<AnaSayfa> {
   final TextEditingController aramaKutusu = TextEditingController();
   String arama = '';
   int filtre = -1; // -1 hepsi, 0 ham, 1 yarı, 3 kurutmada, 4 kuru
+  // YENİ: Hasat takviminde gösterilen ay (ayın 1'i)
+  DateTime takvimAyi = DateTime(DateTime.now().year, DateTime.now().month);
 
   // Kartlar ekranı
   late Kelime aktif;
@@ -3019,84 +3021,160 @@ class _AnaSayfaState extends State<AnaSayfa> {
     return kCizgi;
   }
 
-  // Son 12 hafta: her sütun bir hafta, her satır bir gün (Pzt..Paz)
+  // YENİ: Aylık takvim: telefondaki takvim gibi; çalışılan günler turuncu daire
   Widget takvim() {
-    final bugunTarih = DateTime.now();
-    final buPazartesi = bugunTarih.subtract(Duration(days: bugunTarih.weekday - 1));
-    final baslangic = buPazartesi.subtract(const Duration(days: 7 * 11));
+    final bugunTarih = sadeceGun(DateTime.now());
+    final ay = takvimAyi;
+    final gunSayisi = DateTime(ay.year, ay.month + 1, 0).day; // sonraki ayın 0. günü = bu ayın son günü
+    final bosluk = ay.weekday - 1; // ayın 1'i hangi güne denk geliyor (Pzt = 0 boşluk)
+    final buAyMi = ay.year == bugunTarih.year && ay.month == bugunTarih.month;
+
+    // En eski kayıtlı aya kadar geri gidilebilir
+    final ilkKayit = gecmis.keys.isEmpty
+        ? bugunTarih
+        : DateTime.parse((gecmis.keys.toList()..sort()).first);
+    final geriGidebilir = ay.isAfter(DateTime(ilkKayit.year, ilkKayit.month));
+
+    // Bu ayın özeti
+    var calisilanGun = 0;
+    var toplamKelime = 0;
+    for (int g = 1; g <= gunSayisi; g++) {
+      final sayi = gecmis[tarihMetni(DateTime(ay.year, ay.month, g))] ?? 0;
+      if (sayi > 0) calisilanGun++;
+      toplamKelime += sayi;
+    }
+
+    // Takvim hücreleri: önce boşluklar, sonra günler; 7'şerli satırlara bölünür
+    final hucreler = <Widget>[
+      for (int i = 0; i < bosluk; i++) const SizedBox(),
+      for (int g = 1; g <= gunSayisi; g++) gunHucresi(DateTime(ay.year, ay.month, g), bugunTarih),
+    ];
+    while (hucreler.length % 7 != 0) {
+      hucreler.add(const SizedBox());
+    }
+
     return kutu(
       child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text(
-            'Son 12 hafta',
-            style: TextStyle(fontWeight: FontWeight.w800, color: kSoluk),
-          ),
-          const SizedBox(height: 12),
+          // Ay başlığı ve oklar
           Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              // YENİ: Solda gün harfleri, her biri bir karenin hizasında
-              Column(
-                children: [
-                  for (final h in ['P', 'S', 'Ç', 'P', 'C', 'C', 'P'])
-                    SizedBox(
-                      height: 22,
-                      child: Center(
-                        child: Text(
-                          h,
-                          style: const TextStyle(
-                            fontSize: 11,
-                            fontWeight: FontWeight.w700,
-                            color: Color(0xFF7E766E),
-                          ),
-                        ),
-                      ),
-                    ),
-                ],
+              IconButton(
+                tooltip: 'Önceki ay',
+                onPressed: geriGidebilir
+                    ? () => setState(() => takvimAyi = DateTime(ay.year, ay.month - 1))
+                    : null,
+                icon: const Icon(Icons.chevron_left_rounded),
               ),
-              ...List.generate(12, (hafta) {
-                return Column(
-                  children: List.generate(7, (gun) {
-                    final tarih = baslangic.add(Duration(days: hafta * 7 + gun));
-                    final gelecek = tarih.isAfter(bugunTarih);
-                    final sayi = gecmis[tarihMetni(tarih)] ?? 0;
-                    final korundu = sayi == 0 && korunanGunler.contains(tarihMetni(tarih));
-                    return Container(
-                      width: 18,
-                      height: 18,
-                      margin: const EdgeInsets.all(2),
-                      decoration: BoxDecoration(
-                        color: gelecek ? Colors.transparent : takvimRengi(sayi),
-                        borderRadius: BorderRadius.circular(4),
-                        // Sepetle korunan gün: turuncu çerçeve
-                        border: korundu ? Border.all(color: kTuruncu, width: 1.5) : null,
-                      ),
-                    );
-                  }),
-                );
-              }),
+              Expanded(
+                child: Text(
+                  '${aylar[ay.month - 1]} ${ay.year}',
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w900),
+                ),
+              ),
+              IconButton(
+                tooltip: 'Sonraki ay',
+                onPressed: buAyMi
+                    ? null // geleceğe gidilmez
+                    : () => setState(() => takvimAyi = DateTime(ay.year, ay.month + 1)),
+                icon: const Icon(Icons.chevron_right_rounded),
+              ),
             ],
           ),
-          const SizedBox(height: 10),
+          Text(
+            calisilanGun == 0
+                ? 'Bu ay henüz çalışılmadı'
+                : '$calisilanGun gün çalıştın · $toplamKelime kelime',
+            style: const TextStyle(color: kSoluk, fontWeight: FontWeight.w600),
+          ),
+          const SizedBox(height: 12),
+          // Gün başlıkları
           Row(
-            mainAxisAlignment: MainAxisAlignment.end,
+            children: [
+              for (final h in ['P', 'S', 'Ç', 'P', 'C', 'C', 'P'])
+                Expanded(
+                  child: Center(
+                    child: Text(
+                      h,
+                      style: const TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w800,
+                        color: Color(0xFF7E766E),
+                      ),
+                    ),
+                  ),
+                ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          for (int satir = 0; satir < hucreler.length ~/ 7; satir++)
+            Row(
+              children: [
+                for (int i = 0; i < 7; i++)
+                  Expanded(child: hucreler[satir * 7 + i]),
+              ],
+            ),
+          const SizedBox(height: 10),
+          // Renklerin anlamı
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
             children: [
               const Text('az ', style: TextStyle(color: kSoluk, fontSize: 12)),
-              for (final s in [0, 1, 5, 10])
+              for (final s in [1, 5, 10])
                 Container(
                   width: 14,
                   height: 14,
                   margin: const EdgeInsets.symmetric(horizontal: 2),
                   decoration: BoxDecoration(
                     color: takvimRengi(s),
-                    borderRadius: BorderRadius.circular(3),
+                    shape: BoxShape.circle,
                   ),
                 ),
               const Text(' çok', style: TextStyle(color: kSoluk, fontSize: 12)),
+              const SizedBox(width: 16),
+              const Icon(Icons.shopping_basket_outlined, size: 14, color: kTuruncu),
+              const Text(' sepetle korundu', style: TextStyle(color: kSoluk, fontSize: 12)),
             ],
           ),
         ],
+      ),
+    );
+  }
+
+  // Takvimde bir gün: numara; çalışıldıysa renkli daire, bugünse çerçeve
+  Widget gunHucresi(DateTime gun, DateTime bugunTarih) {
+    final sayi = gecmis[tarihMetni(gun)] ?? 0;
+    final korundu = sayi == 0 && korunanGunler.contains(tarihMetni(gun));
+    final gelecek = gun.isAfter(bugunTarih);
+    final bugunMu = gun == bugunTarih;
+    return Padding(
+      padding: const EdgeInsets.all(3),
+      child: AspectRatio(
+        aspectRatio: 1, // kare hücre, içinde daire
+        child: Container(
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            color: sayi > 0 ? takvimRengi(sayi) : Colors.transparent,
+            border: bugunMu
+                ? Border.all(color: kYazi, width: 2)
+                : (korundu ? Border.all(color: kTuruncu, width: 1.5) : null),
+          ),
+          child: Center(
+            child: korundu
+                ? const Icon(Icons.shopping_basket_outlined, size: 16, color: kTuruncu)
+                : Text(
+                    '${gun.day}',
+                    style: TextStyle(
+                      fontWeight: sayi > 0 || bugunMu ? FontWeight.w900 : FontWeight.w600,
+                      fontSize: 14,
+                      color: gelecek
+                          ? const Color(0xFF4A4440) // gelecek günler soluk
+                          : (sayi >= 10 ? const Color(0xFF1A0E05) : kYazi),
+                    ),
+                  ),
+          ),
+        ),
       ),
     );
   }
