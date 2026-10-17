@@ -59,6 +59,7 @@ class _AnaSayfaState extends State<AnaSayfa> {
   Set<String> korunanGunler = {}; // sepetle korunan günler (seri bozulmaz)
   String? sonSepet; // en son sepet kazanılan gün
   List<Ders> dersler = []; // paketten oluşturulan dersler
+  Map<String, Ders> kelimeninDersi = {}; // "apple" -> Yiyecek dersi (şıklar için)
   Map<String, int> dersPuanlari = {}; // "A1-3" -> kazanılan kayısı (0-3)
   PageController? dersKaydirici; // ana sayfadaki ders kartlarını kaydırır
 
@@ -226,6 +227,7 @@ class _AnaSayfaState extends State<AnaSayfa> {
     final harita = {for (final k in kelimeler) k.ing: k};
     final sayac = <String, int>{}; // her seviyede kaçıncı ders
     dersler = [];
+    kelimeninDersi = {};
     for (final (duzey, baslik, liste) in dersPlani) {
       final no = (sayac[duzey] ?? 0) + 1;
       sayac[duzey] = no;
@@ -235,7 +237,11 @@ class _AnaSayfaState extends State<AnaSayfa> {
           if (harita[ing] != null) harita[ing]!,
       ];
       if (dersKelimeleri.isEmpty) continue;
-      dersler.add(Ders(duzey, no, baslik, dersKelimeleri));
+      final ders = Ders(duzey, no, baslik, dersKelimeleri);
+      dersler.add(ders);
+      for (final k in dersKelimeleri) {
+        kelimeninDersi[k.ing] = ders;
+      }
     }
   }
 
@@ -351,7 +357,13 @@ class _AnaSayfaState extends State<AnaSayfa> {
     final sonuc = await Navigator.push<DersSonucu>(
       context,
       MaterialPageRoute(
-        builder: (_) => DersSayfasi(ders: d, tumKelimeler: kelimeler, oku: oku),
+        builder: (_) => DersSayfasi(
+          ders: d,
+          tumKelimeler: kelimeler,
+          // Tekrar dersinde kelimeler karışık konulardan: her kelimenin kendi dersi
+          konuArkadaslari: (k) => kelimeninDersi[k.ing]?.kelimeler ?? d.kelimeler,
+          oku: oku,
+        ),
       ),
     );
     if (sonuc == null || !mounted) return; // ders yarıda bırakıldı
@@ -717,23 +729,14 @@ class _AnaSayfaState extends State<AnaSayfa> {
   }
 
   // 1 doğru + 3 yanlış şık. Yanlışlar mümkünse aynı seviyeden seçilir.
-  List<String> siklariUret(Kelime k) {
-    final dogru = cevapMetni(k);
-    var adaylar = kelimeler.where((x) => x.ing != k.ing && x.duzey == k.duzey).toList();
-    if (adaylar.length < 3) {
-      adaylar = kelimeler.where((x) => x.ing != k.ing).toList();
-    }
-    adaylar.shuffle(rastgele);
-    final yanlislar = <String>[];
-    for (final x in adaylar) {
-      final m = cevapMetni(x);
-      if (m != dogru && !yanlislar.contains(m)) yanlislar.add(m);
-      if (yanlislar.length == 3) break;
-    }
-    final hepsi = [dogru, ...yanlislar];
-    hepsi.shuffle(rastgele);
-    return hepsi;
-  }
+  // Şıklar: yanlışlar önce kelimenin kendi dersinden (aynı konu)
+  List<String> siklariUret(Kelime k) => sikUret(
+        kelime: k,
+        ayniDers: kelimeninDersi[k.ing]?.kelimeler ?? [],
+        tumKelimeler: kelimeler,
+        metin: cevapMetni, // yöne göre Türkçe ya da İngilizce şıklar
+        rastgele: rastgele,
+      );
 
   // Cevap verildi: kurutma sistemi güncellenir, geri bildirim gösterilir
   void cevapla(bool dogru) {

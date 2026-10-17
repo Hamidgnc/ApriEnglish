@@ -1,4 +1,6 @@
-// Ders modeli, seviye listesi ve ders başlıkları.
+// Ders modeli, seviye listesi, ders başlıkları ve şık üretici.
+
+import 'dart:math';
 
 import '../paket.dart';
 import 'kelime.dart';
@@ -21,4 +23,40 @@ class Ders {
 
   // Kayıtta dersi bu adla tutarız, ör. "A1-3"
   String get kimlik => '$duzey-$no';
+}
+
+// Çoktan seçmeli şıklar: doğru cevap + yanlış şıklar, karışık sırayla.
+// Yanlış şıklar ÖNCE AYNI DERSTEN (aynı konu) seçilir: "apple" sorulunca şıklar
+// "elma, muz, üzüm, kiraz" olur; konuya bakıp tahminle bilinemez.
+// Ders yetmezse aynı seviyeden, o da yetmezse bütün kelimelerden tamamlanır.
+// Anlamı ortak olanlar (house "ev" / home "ev, yuva") şık olmaz: ikisi de doğru sayılırdı.
+// metin: şıkta kelimenin hangi yüzü görünecek (Türkçe anlam ya da İngilizcesi).
+List<String> sikUret({
+  required Kelime kelime,
+  required List<Kelime> ayniDers,
+  required List<Kelime> tumKelimeler,
+  required String Function(Kelime) metin,
+  required Random rastgele,
+  int adet = 3,
+}) {
+  final parcalar = kelime.anlam.split(', ').toSet();
+  bool uygun(Kelime x) =>
+      x.ing != kelime.ing && !x.anlam.split(', ').any(parcalar.contains);
+  final dogru = metin(kelime);
+  final yanlislar = <String>[];
+  final havuzlar = [
+    ayniDers,
+    tumKelimeler.where((x) => x.duzey == kelime.duzey).toList(),
+    tumKelimeler,
+  ];
+  for (final havuz in havuzlar) {
+    final karisik = havuz.where(uygun).toList()..shuffle(rastgele);
+    for (final x in karisik) {
+      final m = metin(x);
+      if (m != dogru && !yanlislar.contains(m)) yanlislar.add(m);
+      if (yanlislar.length == adet) break;
+    }
+    if (yanlislar.length == adet) break;
+  }
+  return [dogru, ...yanlislar]..shuffle(rastgele);
 }

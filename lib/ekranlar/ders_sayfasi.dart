@@ -28,13 +28,15 @@ class DersAdimi {
 
 class DersSayfasi extends StatefulWidget {
   final Ders ders;
-  final List<Kelime> tumKelimeler; // yanlış şıkları buradan seçeriz
+  final List<Kelime> tumKelimeler; // ders yetmezse yanlış şıklar buradan tamamlanır
+  final List<Kelime> Function(Kelime) konuArkadaslari; // kelimenin dersindeki diğerleri
   final void Function(String) oku; // ana sayfadaki seslendirme
 
   const DersSayfasi({
     super.key,
     required this.ders,
     required this.tumKelimeler,
+    required this.konuArkadaslari,
     required this.oku,
   });
 
@@ -127,26 +129,14 @@ class _DersSayfasiState extends State<DersSayfasi> {
     }
   }
 
-  // Doğru anlam + aynı seviyeden 3 yanlış anlam, karışık sırayla.
-  // Anlamı ortak olan kelimeler (house "ev" / home "ev, yuva") şık olmaz.
-  List<String> siklariUret(Kelime k) {
-    final parcalar = k.anlam.split(', ').toSet();
-    bool ortakMi(Kelime x) => x.anlam.split(', ').any(parcalar.contains);
-    var adaylar = widget.tumKelimeler
-        .where((x) => x.duzey == k.duzey && !ortakMi(x))
-        .map((x) => x.anlam)
-        .toSet()
-        .toList();
-    if (adaylar.length < 3) {
-      adaylar = widget.tumKelimeler
-          .where((x) => !ortakMi(x))
-          .map((x) => x.anlam)
-          .toSet()
-          .toList();
-    }
-    adaylar.shuffle(rastgele);
-    return [k.anlam, ...adaylar.take(3)]..shuffle(rastgele);
-  }
+  // Doğru anlam + 3 yanlış anlam; yanlışlar önce aynı dersten (aynı konu)
+  List<String> siklariUret(Kelime k) => sikUret(
+        kelime: k,
+        ayniDers: widget.konuArkadaslari(k),
+        tumKelimeler: widget.tumKelimeler,
+        metin: (x) => x.anlam,
+        rastgele: rastgele,
+      );
 
   void ileri() {
     if (adimNo + 1 >= adimlar.length) {
