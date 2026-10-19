@@ -21,6 +21,7 @@ import '../tema.dart';
 import '../yardimcilar/tarih.dart';
 import 'ders_sayfasi.dart';
 import 'geri_bildirim_sayfasi.dart';
+import 'hakkinda_sayfasi.dart';
 import 'hesap_sayfasi.dart';
 import 'tanitim_sayfasi.dart';
 
@@ -2215,14 +2216,18 @@ class _AnaSayfaState extends State<AnaSayfa> {
               tanitimTekrar = true;
             }),
           ),
+          // Play Store kuralı: gizlilik politikası uygulamanın içinden de açılabilmeli
+          duzSatir(
+            ikon: Icons.lock_outline_rounded,
+            ad: 'Gizlilik politikası',
+            onTap: () => baglantiAc(context, Uri.parse(gizlilikAdresi)),
+          ),
           duzSatir(
             ikon: Icons.info_outline_rounded,
             ad: 'Uygulama hakkında',
-            onTap: () => showAboutDialog(
-              context: context,
-              applicationName: 'ApriEnglish',
-              applicationVersion: '1.0',
-              applicationLegalese: "Malatya'dan sevgilerle",
+            onTap: () => Navigator.push(
+              context,
+              MaterialPageRoute(builder: (_) => const HakkindaSayfasi()),
             ),
           ),
         ]),
