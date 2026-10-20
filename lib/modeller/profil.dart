@@ -15,6 +15,7 @@ class Profil {
   String planBitis; // plan yapıldığı gün hesaplanan bitiş; önde/geride kıyası için
   bool ses; // ses efektleri açık mı
   bool titresim; // titreşim açık mı
+  bool otomatikOku; // derste yeni kelime çıkınca kendiliğinden okunsun mu
 
   Profil({
     this.ad = '',
@@ -30,6 +31,7 @@ class Profil {
     this.planBitis = '',
     this.ses = true,
     this.titresim = true,
+    this.otomatikOku = true,
   });
 
   // Hesabım sayfası bir kopya üzerinde çalışır; Kaydet'e basılmazsa asıl profil değişmez
@@ -47,6 +49,7 @@ class Profil {
         planBitis: planBitis,
         ses: ses,
         titresim: titresim,
+        otomatikOku: otomatikOku,
       );
 
   Map<String, dynamic> toJson() => {
@@ -63,6 +66,7 @@ class Profil {
         'planBitis': planBitis,
         'ses': ses,
         'titresim': titresim,
+        'otomatikOku': otomatikOku,
       };
 
   // Eski kayıtlarda yeni alanlar yok: ?? ile varsayılan değer veriyoruz (migration)
@@ -80,5 +84,6 @@ class Profil {
         planBitis: j['planBitis'] ?? '',
         ses: j['ses'] ?? true,
         titresim: j['titresim'] ?? true,
+        otomatikOku: j['otomatikOku'] ?? true,
       );
 }

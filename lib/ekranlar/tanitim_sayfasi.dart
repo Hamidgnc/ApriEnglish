@@ -68,10 +68,10 @@ class _TanitimSayfasiState extends State<TanitimSayfasi> {
 
   // Seviyeye göre: (açık seviyeler, başlangıç seviyesi)
   (Set<String>, String) seviyeAyari() => switch (seviye) {
-        'biraz' => (<String>{'A1', 'A2', 'Benim'}, 'A2'),
-        'orta' => (<String>{'A2', 'B1', 'Benim'}, 'B1'),
-        'ileri' => (<String>{'B1', 'B2', 'Benim'}, 'B2'),
-        _ => (<String>{'A1', 'Benim'}, 'A1'),
+        'biraz' => (<String>{'A1', 'A2'}, 'A2'),
+        'orta' => (<String>{'A2', 'B1'}, 'B1'),
+        'ileri' => (<String>{'B1', 'B2'}, 'B2'),
+        _ => (<String>{'A1'}, 'A1'),
       };
 
   // Bu sayfada Devam'a basılabilir mi?

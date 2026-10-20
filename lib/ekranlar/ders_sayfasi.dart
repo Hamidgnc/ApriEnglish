@@ -8,6 +8,7 @@ import '../bilesenler/cizimler.dart';
 import '../modeller/ders.dart';
 import '../modeller/kelime.dart';
 import '../servisler/efekt.dart';
+import '../servisler/telaffuz.dart';
 import '../tema.dart';
 
 // Ders bitince ana sayfaya giden sonuç
@@ -106,7 +107,8 @@ class _DersSayfasiState extends State<DersSayfasi> {
   void adimiHazirla() {
     final a = adim;
     secilen = null;
-    if (a.tur == 'tanit' || a.tur == 'secmeli') {
+    // Kapalıysa kullanıcı hoparlör düğmesine basarak dinler
+    if ((a.tur == 'tanit' || a.tur == 'secmeli') && Telaffuz.otomatik) {
       widget.oku(a.kelimeler.first.ing);
     }
     if (a.tur == 'secmeli') {

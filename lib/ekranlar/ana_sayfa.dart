@@ -5,7 +5,6 @@ import 'dart:convert';
 import 'dart:math';
 
 import 'package:flutter/material.dart';
-import 'package:flutter_tts/flutter_tts.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../bilesenler/cizimler.dart';
@@ -17,6 +16,7 @@ import '../paket.dart';
 import '../servisler/bildirim.dart';
 import '../servisler/efekt.dart';
 import '../servisler/program.dart';
+import '../servisler/telaffuz.dart';
 import '../tema.dart';
 import '../yardimcilar/tarih.dart';
 import 'ders_sayfasi.dart';
@@ -45,10 +45,12 @@ class _AnaSayfaState extends State<AnaSayfa> {
   };
 
   List<Kelime> kelimeler = []; // ilk açılışta hazır paketle dolar
-  Set<String> seciliDuzeyler = {'A1', 'Benim'}; // çalışılan seviyeler
+  Set<String> seciliDuzeyler = {'A1'}; // çalışılan seviyeler
+
+  // Kendi kelime ekleme kaldırıldı; eskiden eklenmiş kelimesi olanlar için "Benim" görünmeye devam eder
+  bool get benimVar => kelimeler.any((k) => k.duzey == 'Benim');
   String aktifDuzey = 'A1'; // ana sayfada derslerini gördüğün seviye
   final Random rastgele = Random();
-  final FlutterTts ses = FlutterTts();
   bool yuklendi = false;
   int sekme = 0;
   int bugun = 0; // bugün bilinen kelime sayısı
@@ -93,32 +95,24 @@ class _AnaSayfaState extends State<AnaSayfa> {
   final TextEditingController cevapKutusu = TextEditingController();
 
   // Ekleme ekranı
-  final TextEditingController ingKutusu = TextEditingController();
-  final TextEditingController trKutusu = TextEditingController();
 
   @override
   void initState() {
     super.initState();
-    ses.setLanguage('en-US');
-    ses.setSpeechRate(0.45);
+    Telaffuz.hazirla(); // en iyi İngilizce sesi önceden seç
     kelimeleriYukle();
   }
 
   @override
   void dispose() {
-    ses.stop();
+    Telaffuz.dur();
     cevapKutusu.dispose();
-    ingKutusu.dispose();
-    trKutusu.dispose();
     aramaKutusu.dispose();
     dersKaydirici?.dispose();
     super.dispose();
   }
 
-  Future<void> oku(String metin) async {
-    await ses.stop();
-    await ses.speak(metin);
-  }
+  Future<void> oku(String metin) => Telaffuz.oku(metin);
 
   Future<void> kelimeleriYukle() async {
     final prefs = SharedPreferencesAsync();
@@ -144,6 +138,7 @@ class _AnaSayfaState extends State<AnaSayfa> {
       profil = Profil.fromJson(jsonDecode(profilMetni));
       Efekt.ses = profil.ses;
       Efekt.titresim = profil.titresim;
+      Telaffuz.otomatik = profil.otomatikOku;
     }
     final duzeyMetni = await prefs.getString('duzeyler');
     if (duzeyMetni != null) {
@@ -165,6 +160,8 @@ class _AnaSayfaState extends State<AnaSayfa> {
       final Map<String, dynamic> m = jsonDecode(puanMetni);
       dersPuanlari = m.map((ders, puan) => MapEntry(ders, puan as int));
     }
+    if (!benimVar) seciliDuzeyler.remove('Benim'); // boş seviye seçili kalmasın
+    if (seciliDuzeyler.isEmpty) seciliDuzeyler.add('A1');
     dersleriOlustur();
     // Kayıtlı aktif seviye yoksa açık seviyelerden ilkini al
     aktifDuzey = await prefs.getString('aktifDuzey') ??
@@ -605,7 +602,8 @@ class _AnaSayfaState extends State<AnaSayfa> {
       profil = yeni;
       Efekt.ses = profil.ses;
       Efekt.titresim = profil.titresim;
-      seciliDuzeyler = duzeyler;
+      Telaffuz.otomatik = profil.otomatikOku;
+      seciliDuzeyler = {...duzeyler, if (benimVar) 'Benim'};
       tanitimTamam = true;
       tanitimTekrar = false;
       sekme = 0; // tanıtımdan sonra hep ana sayfaya dön
@@ -794,29 +792,6 @@ class _AnaSayfaState extends State<AnaSayfa> {
       soruHazirla();
     });
     if (testModu == 'dinle') oku(soru.ing);
-  }
-
-  void kelimeEkle() {
-    final ing = ingKutusu.text.trim().toLowerCase();
-    final tr = turkceKucuk(trKutusu.text.trim());
-    if (ing.isEmpty || tr.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Boş bırakılamaz.')),
-      );
-      return;
-    }
-    setState(() {
-      kelimeler.removeWhere((k) => k.ing == ing);
-      kelimeler.add(Kelime(ing: ing, anlam: tr, duzey: 'Benim'));
-      seciliDuzeyler.add('Benim');
-      ingKutusu.clear();
-      trKutusu.clear();
-      dersleriOlustur(); // paketteki bir kelimenin yerine geçtiyse dersler güncellensin
-    });
-    kelimeleriKaydet();
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text("'$ing' eklendi!")),
-    );
   }
 
   // Bir seviyeyi açar ya da kapatır (en az bir seviye açık kalır)
@@ -2196,6 +2171,15 @@ class _AnaSayfaState extends State<AnaSayfa> {
               if (acik) Efekt.titret(); // açınca bir kez titret
             },
           ),
+          anahtarSatiri(
+            ikon: Icons.record_voice_over_outlined,
+            ad: 'Kelimeleri otomatik oku',
+            deger: profil.otomatikOku,
+            onChanged: (acik) {
+              setState(() => profil.otomatikOku = Telaffuz.otomatik = acik);
+              profiliKaydet();
+            },
+          ),
         ]),
         const SizedBox(height: 18),
         satirGrubu([
@@ -2247,7 +2231,7 @@ class _AnaSayfaState extends State<AnaSayfa> {
 
   // Açık seviyeler kısa yazılır: "A1 · A2 · ★"
   String seviyeOzeti() {
-    final sira = [...seviyeler, 'Benim'];
+    final sira = [...seviyeler, if (benimVar) 'Benim'];
     return sira
         .where(seciliDuzeyler.contains)
         .map((d) => d == 'Benim' ? '★' : d)
@@ -2450,52 +2434,8 @@ class _AnaSayfaState extends State<AnaSayfa> {
                   ),
                 ),
                 for (final d in duzeyBilgisi.entries)
-                  paketKarti(d.key, d.value, () => yenile(() {})),
-                kutu(
-                  child: ExpansionTile(
-                    tilePadding: EdgeInsets.zero,
-                    shape: const Border(),
-                    collapsedShape: const Border(),
-                    leading: const Icon(Icons.add_circle_outline, color: kTuruncu),
-                    title: const Text(
-                      'Kendi kelimeni ekle',
-                      style: TextStyle(fontWeight: FontWeight.bold, color: kSoluk),
-                    ),
-                    children: [
-                      TextField(
-                        controller: ingKutusu,
-                        decoration: const InputDecoration(
-                          labelText: 'İngilizce kelime',
-                          border: OutlineInputBorder(),
-                        ),
-                      ),
-                      const SizedBox(height: 12),
-                      TextField(
-                        controller: trKutusu,
-                        decoration: const InputDecoration(
-                          labelText: 'Türkçe anlamı',
-                          border: OutlineInputBorder(),
-                        ),
-                        onSubmitted: (_) {
-                          kelimeEkle();
-                          yenile(() {}); // Benim kelimelerim sayısı güncellensin
-                        },
-                      ),
-                      const SizedBox(height: 12),
-                      SizedBox(
-                        width: double.infinity,
-                        child: FilledButton(
-                          onPressed: () {
-                            kelimeEkle();
-                            yenile(() {});
-                          },
-                          child: const Text('Kaydet'),
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                    ],
-                  ),
-                ),
+                  if (d.key != 'Benim' || benimVar)
+                    paketKarti(d.key, d.value, () => yenile(() {})),
               ],
             ),
           ),
